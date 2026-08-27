@@ -73,7 +73,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({
 Version: v${PANEL_VERSION} (${PANEL_BUILD_DATE})
 Connection: ${activeConnection?.name || 'Local'} (${activeConnection?.host || 'localhost'})
 Stack: React 19 + TypeScript + Vite + Tailwind CSS + Express Node.js
-Repository: https://github.com/shahbazimasoud/clonematrixtest`;
+Repository: https://github.com/shahbazimasoud/Matrix-Stack-Manager`;
     
     navigator.clipboard.writeText(info);
     setCopied(true);
@@ -366,13 +366,13 @@ Repository: https://github.com/shahbazimasoud/clonematrixtest`;
                     <div>
                       <h4 className="text-xs font-bold">{lang === 'fa' ? 'مخزن رسمی گیت‌هاب' : 'Official GitHub Repository'}</h4>
                       <p className={`text-[11px] ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                        github.com/shahbazimasoud/clonematrixtest
+                        github.com/shahbazimasoud/Matrix-Stack-Manager
                       </p>
                     </div>
                   </div>
 
                   <a
-                    href="https://github.com/shahbazimasoud/clonematrixtest"
+                    href="https://github.com/shahbazimasoud/Matrix-Stack-Manager"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-md shadow-indigo-500/20"

@@ -16,12 +16,12 @@
 
 ---
 
-## Current Panel Version: **v2.38.28** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.29** (Released: 2026-08-27)
 
 ### Changelog History
 
-#### **v2.38.28** - 2026-08-27
-- **Production Stack Synchronization to Matrix-Stack-Manager**:
-  - **Repository Synchronization**: Successfully pushed and initialized full production codebase to `github.com/shahbazimasoud/Matrix-Stack-Manager`.
-  - **Streamlined Single-Version Manifest**: Retained exclusively the active latest release in the version log.
-  - **Integrity Verification**: Full validation of server, UI modules, and compilation passes.
+#### **v2.38.29** - 2026-08-27
+- **Documentation & Installer Links Alignment for Matrix-Stack-Manager**:
+  - **Repository Documentation Synchronization**: Fully updated `README.md` installation commands, clone instructions, and service guides to target `github.com/shahbazimasoud/Matrix-Stack-Manager`.
+  - **Installer & Uninstaller Alignment**: Configured `setup-panel.sh` and `uninstall-panel.sh` to download, clone, and proxy exclusively from the official `Matrix-Stack-Manager` repository.
+  - **UI & Applet Metadata Update**: Updated all in-app GitHub repository references in About Modal, Application Header, and Raven Logo audio assets.

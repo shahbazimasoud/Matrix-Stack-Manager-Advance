@@ -2059,7 +2059,7 @@ export default function App() {
                             <div className="flex items-center justify-between text-slate-400">
                               <span>{lang === 'fa' ? 'مخزن اصلی:' : 'Repo:'}</span>
                               <a 
-                                href="https://github.com/shahbazimasoud/clonematrixtest" 
+                                href="https://github.com/shahbazimasoud/Matrix-Stack-Manager" 
                                 target="_blank" 
                                 rel="noopener noreferrer" 
                                 className="text-indigo-400 hover:underline flex items-center gap-1 text-[10px] font-semibold"

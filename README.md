@@ -23,7 +23,7 @@ The legacy management approach requiring direct, open SSH and database ports has
 شما می‌توانید کل پروژه (شامل کلاینت پنل و سرور بک‌اند) را روی هر سرور ابری یا VPS خام (لینوکس اوبونتو یا دبیان) به سادگی با اجرای یک دستور تک‌خطی زیر نصب کنید:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shahbazimasoud/clonematrixtest/master/setup-panel.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | sudo bash
 ```
 
 ### 📋 مراحل نصب تعاملی پنل:
@@ -39,7 +39,7 @@ curl -sSL https://raw.githubusercontent.com/shahbazimasoud/clonematrixtest/maste
 Deploy the entire full-stack Raven Matrix Stack Manager panel on any fresh Ubuntu/Debian VPS with a single interactive command:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shahbazimasoud/clonematrixtest/master/setup-panel.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | sudo bash
 ```
 
 ### 📋 How the Interactive Setup Works:
@@ -100,7 +100,7 @@ Once installed, use standard systemd commands to inspect and control the daemon 
 To completely remove the Matrix Manager panel, its databases, persistent settings, systemd daemon services, and any related Nginx virtual host configurations from your VPS, run the interactive uninstaller:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shahbazimasoud/clonematrixtest/master/uninstall-panel.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | sudo bash
 ```
 
 ---
@@ -125,8 +125,8 @@ If you want to run or build the code locally for development purposes:
 
 1. کلون کردن ریپازیتوری | Clone the repository:
    ```bash
-   git clone https://github.com/shahbazimasoud/clonematrixtest.git
-   cd clonematrixtest
+   git clone https://github.com/shahbazimasoud/Matrix-Stack-Manager.git
+   cd Matrix-Stack-Manager
    ```
 2. نصب پیش‌نیازها | Install dependencies:
    ```bash
