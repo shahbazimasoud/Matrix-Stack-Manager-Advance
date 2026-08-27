@@ -16,9 +16,15 @@
 
 ---
 
-## Current Panel Version: **v2.38.23** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.24** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.24** - 2026-08-27
+- **High-Contrast Chart Hover Tooltip Styling & Contrast Fix**:
+  - **Fixed Chart Hover Tooltip Visibility**: Resolved unreadable/invisible tooltip text on charts across Light and Dark modes.
+  - **Removed Invasive CSS Override**: Removed wildcard CSS rules that forced white text over light backgrounds inside Recharts tooltip wrapper.
+  - **Enhanced Custom HUD Chart Tooltip**: Upgraded `CustomChartTooltip` with crisp dark card background, vibrant indicator badges, bright cyan time labels, and clear metric values with units across all performance charts.
 
 #### **v2.38.23** - 2026-08-27
 - **Harmonized Performance Analytics & Display Modes with High-Contrast DB Detection UI**:

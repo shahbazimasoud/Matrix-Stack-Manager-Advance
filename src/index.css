@@ -580,48 +580,40 @@
 }
 
 /* Recharts Chart Tooltips - Force High Contrast Bright Bold Text in Light & Dark Modes */
+.recharts-tooltip-wrapper {
+  pointer-events: none !important;
+  z-index: 9999 !important;
+}
+
 .recharts-default-tooltip,
-.theme-light .recharts-default-tooltip,
-.recharts-tooltip-wrapper .recharts-default-tooltip {
+.theme-light .recharts-default-tooltip {
   background-color: #0f172a !important;
   border: 1px solid #334155 !important;
   border-radius: 0.75rem !important;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7) !important;
   padding: 8px 12px !important;
   color: #ffffff !important;
 }
 
-.recharts-default-tooltip *,
-.theme-light .recharts-default-tooltip *,
-.recharts-tooltip-wrapper *,
-.recharts-tooltip-wrapper span,
-.recharts-tooltip-wrapper p,
-.recharts-tooltip-wrapper div,
-.theme-light .recharts-tooltip-wrapper span,
-.theme-light .recharts-tooltip-wrapper p,
-.theme-light .recharts-tooltip-wrapper div {
-  color: #ffffff !important;
-  font-weight: 700 !important;
-}
-
-.recharts-tooltip-label,
-.theme-light .recharts-tooltip-label {
+.recharts-default-tooltip .recharts-tooltip-label,
+.theme-light .recharts-default-tooltip .recharts-tooltip-label {
   color: #38bdf8 !important;
   font-weight: 800 !important;
   font-size: 11px !important;
   margin-bottom: 4px !important;
+  font-family: monospace !important;
 }
 
-.recharts-tooltip-item,
-.theme-light .recharts-tooltip-item,
-.recharts-tooltip-item-name,
-.theme-light .recharts-tooltip-item-name {
+.recharts-default-tooltip .recharts-tooltip-item,
+.theme-light .recharts-default-tooltip .recharts-tooltip-item,
+.recharts-default-tooltip .recharts-tooltip-item-name,
+.theme-light .recharts-default-tooltip .recharts-tooltip-item-name {
   color: #f1f5f9 !important;
   font-weight: 700 !important;
 }
 
-.recharts-tooltip-item-value,
-.theme-light .recharts-tooltip-item-value {
+.recharts-default-tooltip .recharts-tooltip-item-value,
+.theme-light .recharts-default-tooltip .recharts-tooltip-item-value {
   color: #38bdf8 !important;
   font-weight: 800 !important;
 }

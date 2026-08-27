@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.23";
+export const PANEL_VERSION = "2.38.24";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.24",
+    date: "2026-08-27",
+    title: "High-Contrast Chart Hover Tooltip Styling & Contrast Fix",
+    changes: [
+      "Fixed Chart Hover Tooltip Visibility: Resolved unreadable/invisible tooltip text on charts across Light and Dark modes.",
+      "Removed Invasive CSS Override: Removed wildcard CSS rules that forced white text over light backgrounds inside Recharts tooltip wrapper.",
+      "Enhanced Custom HUD Chart Tooltip: Upgraded CustomChartTooltip with crisp dark card background, vibrant indicator badges, bright cyan time labels, and clear metric values with units across all performance charts."
+    ]
+  },
   {
     version: "2.38.23",
     date: "2026-08-27",

@@ -822,11 +822,15 @@ const ruTranslations = {
 const CustomChartTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className="p-3.5 rounded-xl bg-slate-900/95 border border-slate-700/80 shadow-2xl backdrop-blur-md text-left dir-ltr min-w-[150px] pointer-events-none z-50">
+      <div className="p-3.5 rounded-2xl bg-slate-950/98 border border-slate-700/90 shadow-2xl backdrop-blur-md text-left dir-ltr min-w-[170px] pointer-events-none z-50">
         {label && (
-          <p className="text-[11px] font-extrabold text-cyan-300 mb-1.5 border-b border-slate-700/80 pb-1 font-mono tracking-wide">
-            {label}
-          </p>
+          <div className="flex items-center justify-between gap-2 border-b border-slate-700/80 pb-1.5 mb-2 font-mono">
+            <span className="text-[11px] font-extrabold text-cyan-300 tracking-wide flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              {label}
+            </span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Metrics</span>
+          </div>
         )}
         <div className="space-y-1.5">
           {payload.map((entry: any, index: number) => {
@@ -838,15 +842,21 @@ const CustomChartTooltip = ({ active, payload, label }: any) => {
               else if (entry.dataKey === 'networkIn' || entry.dataKey === 'networkOut') unit = 'KB/s';
               else if (entry.dataKey === 'diskIops') unit = 'op/s';
               else if (entry.dataKey === 'diskLatencyMs') unit = 'ms';
+              else if (entry.dataKey === 'activeUsers') unit = 'users';
             }
+            const rawVal = entry.value;
+            const formattedVal = typeof rawVal === 'number'
+              ? (Number.isInteger(rawVal) ? rawVal : rawVal.toFixed(1))
+              : (rawVal !== undefined && rawVal !== null ? rawVal : '--');
+
             return (
-              <div key={`item-${index}`} className="flex items-center justify-between gap-4 text-xs font-bold font-mono">
-                <span className="flex items-center gap-1.5 text-slate-100 font-bold">
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: color }} />
-                  <span className="text-white font-bold">{entry.name || entry.dataKey}:</span>
+              <div key={`item-${index}`} className="flex items-center justify-between gap-3 text-xs font-bold font-mono">
+                <span className="flex items-center gap-1.5 text-slate-200">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm ring-1 ring-white/30" style={{ backgroundColor: color }} />
+                  <span className="text-slate-100 font-bold">{entry.name || entry.dataKey}:</span>
                 </span>
-                <span className="font-extrabold text-white text-xs tracking-tight" style={{ color: color }}>
-                  {entry.value} {unit}
+                <span className="font-extrabold text-xs tracking-tight drop-shadow-sm ml-2" style={{ color: color }}>
+                  {formattedVal} {unit}
                 </span>
               </div>
             );

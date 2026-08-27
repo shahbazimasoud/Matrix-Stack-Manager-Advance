@@ -440,15 +440,17 @@ const CustomChartTooltip = ({ active, payload, label, isLightMode = false }: any
     return (
       <div className={`p-3.5 rounded-2xl border shadow-2xl backdrop-blur-md text-left dir-ltr min-w-[170px] pointer-events-none z-50 transition-all ${
         isLightMode 
-          ? 'bg-white/95 border-slate-200 text-slate-800 shadow-slate-300/40' 
-          : 'bg-slate-900/95 border-slate-700/80 text-white shadow-black/80'
+          ? 'bg-slate-900/98 border-slate-700 text-white shadow-2xl shadow-slate-900/40' 
+          : 'bg-slate-950/98 border-slate-700/90 text-white shadow-2xl shadow-black/80'
       }`}>
         {label && (
-          <p className={`text-[11px] font-extrabold mb-2 border-b pb-1 font-mono tracking-wide ${
-            isLightMode ? 'text-indigo-600 border-slate-200' : 'text-cyan-300 border-slate-700/80'
-          }`}>
-            ⏱ {label}
-          </p>
+          <div className="flex items-center justify-between gap-2 border-b border-slate-700/80 pb-1.5 mb-2 font-mono">
+            <span className="text-[11px] font-extrabold text-cyan-300 tracking-wide flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              {label}
+            </span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Metrics</span>
+          </div>
         )}
         <div className="space-y-1.5">
           {payload.map((entry: any, index: number) => {
@@ -460,15 +462,21 @@ const CustomChartTooltip = ({ active, payload, label, isLightMode = false }: any
               else if (entry.dataKey === 'networkIn' || entry.dataKey === 'networkOut') unit = 'KB/s';
               else if (entry.dataKey === 'diskIops') unit = 'op/s';
               else if (entry.dataKey === 'diskLatencyMs') unit = 'ms';
+              else if (entry.dataKey === 'activeUsers') unit = 'users';
             }
+            const rawVal = entry.value;
+            const formattedVal = typeof rawVal === 'number' 
+              ? (Number.isInteger(rawVal) ? rawVal : rawVal.toFixed(1))
+              : (rawVal !== undefined && rawVal !== null ? rawVal : '--');
+
             return (
               <div key={`item-${index}`} className="flex items-center justify-between gap-3 text-xs font-bold font-mono">
-                <span className={`flex items-center gap-1.5 ${isLightMode ? 'text-slate-700' : 'text-slate-200'}`}>
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: color }} />
-                  <span className={isLightMode ? 'text-slate-800' : 'text-white'}>{entry.name || entry.dataKey}:</span>
+                <span className="flex items-center gap-1.5 text-slate-200">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm ring-1 ring-white/30" style={{ backgroundColor: color }} />
+                  <span className="text-slate-100 font-bold">{entry.name || entry.dataKey}:</span>
                 </span>
-                <span className="font-extrabold text-xs tracking-tight" style={{ color: color }}>
-                  {typeof entry.value === 'number' ? entry.value.toFixed(1) : entry.value} {unit}
+                <span className="font-extrabold text-xs tracking-tight drop-shadow-sm ml-2" style={{ color: color }}>
+                  {formattedVal} {unit}
                 </span>
               </div>
             );
