@@ -16,9 +16,15 @@
 
 ---
 
-## Current Panel Version: **v2.38.19** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.20** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.20** - 2026-08-27
+- **Restore Remote Server Date & Time API Endpoints & Real-Time Clock Synchronization**:
+  - **Implemented /api/system/datetime Endpoints**: Restored `GET /api/system/datetime`, `POST /api/system/datetime/set-time`, `POST /api/system/datetime/set-timezone`, and `POST /api/system/datetime/sync-ntp` with support for both remote SSH nodes and local host.
+  - **Live Server Clock Engine**: Enhanced the digital clock widget to calculate live moving seconds based on the remote server's actual timestamp and timezone with automatic background resync.
+  - **Connection-Aware Operations**: Configured all datetime endpoints and requests to honor the active remote connection ID via query and header parameters.
 
 #### **v2.38.19** - 2026-08-27
 - **Fix Timezone Offset Badge Alignment and Card Divider Overflow**:

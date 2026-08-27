@@ -141,6 +141,8 @@ export default function DateTimeConfigTab({
   // State
   const [loading, setLoading] = useState<boolean>(true);
   const [serverInfo, setServerInfo] = useState<ServerDateTimeInfo | null>(null);
+  const [baseTimestamp, setBaseTimestamp] = useState<number>(0);
+  const [baseLocalTime, setBaseLocalTime] = useState<number>(0);
   const [liveSeconds, setLiveSeconds] = useState<number>(0);
 
   // Form Inputs - Manual Time
@@ -181,14 +183,20 @@ export default function DateTimeConfigTab({
   const fetchDateTime = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const res = await fetch('/api/system/datetime', {
+      const connParam = activeConnectionId ? `?connId=${encodeURIComponent(activeConnectionId)}` : '';
+      const res = await fetch(`/api/system/datetime${connParam}`, {
         headers: {
-          'Authorization': `Bearer ${authToken}`
+          'Authorization': `Bearer ${authToken}`,
+          'x-connection-id': activeConnectionId || ''
         }
       });
       const data = await safeParseResponse(res);
       if (data && data.success) {
         setServerInfo(data);
+        const ts = data.timestamp || Date.now();
+        setBaseTimestamp(ts);
+        setBaseLocalTime(Date.now());
+
         if (!inputDate || !silent) {
           setInputDate(data.date || '');
           setInputTime(data.time || '');
@@ -213,13 +221,48 @@ export default function DateTimeConfigTab({
     }
   }, [authToken, activeConnectionId]);
 
-  // Live seconds ticker increment
+  // Live seconds ticker increment and periodic resync
   useEffect(() => {
     const timer = setInterval(() => {
       setLiveSeconds(prev => (prev + 1) % 60);
     }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+
+    // Resync with server every 20 seconds silently
+    const resyncTimer = setInterval(() => {
+      if (authToken) {
+        fetchDateTime(true);
+      }
+    }, 20000);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(resyncTimer);
+    };
+  }, [authToken, activeConnectionId]);
+
+  // Calculate live dynamic server time
+  const getLiveServerTime = () => {
+    if (!serverInfo) return '00:00:00';
+    if (baseTimestamp > 0 && baseLocalTime > 0) {
+      const elapsed = Date.now() - baseLocalTime;
+      const currentMs = baseTimestamp + elapsed;
+      const d = new Date(currentMs);
+      if (serverInfo.timezone) {
+        try {
+          return new Intl.DateTimeFormat('en-GB', {
+            timeZone: serverInfo.timezone,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          }).format(d);
+        } catch (e) {}
+      }
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+    }
+    return serverInfo.time || '00:00:00';
+  };
 
   // Format Persian Shamsi date if requested
   const getFormattedPersianDate = (dateStr?: string) => {
@@ -280,11 +323,13 @@ export default function DateTimeConfigTab({
     ]);
 
     try {
-      const res = await fetch('/api/system/datetime/set-time', {
+      const connParam = activeConnectionId ? `?connId=${encodeURIComponent(activeConnectionId)}` : '';
+      const res = await fetch(`/api/system/datetime/set-time${connParam}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
+          'Authorization': `Bearer ${authToken}`,
+          'x-connection-id': activeConnectionId || ''
         },
         body: JSON.stringify({
           date: inputDate.trim(),
@@ -333,11 +378,13 @@ export default function DateTimeConfigTab({
     ]);
 
     try {
-      const res = await fetch('/api/system/datetime/set-timezone', {
+      const connParam = activeConnectionId ? `?connId=${encodeURIComponent(activeConnectionId)}` : '';
+      const res = await fetch(`/api/system/datetime/set-timezone${connParam}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
+          'Authorization': `Bearer ${authToken}`,
+          'x-connection-id': activeConnectionId || ''
         },
         body: JSON.stringify({
           timezone: targetTz
@@ -378,11 +425,13 @@ export default function DateTimeConfigTab({
     ]);
 
     try {
-      const res = await fetch('/api/system/datetime/sync-ntp', {
+      const connParam = activeConnectionId ? `?connId=${encodeURIComponent(activeConnectionId)}` : '';
+      const res = await fetch(`/api/system/datetime/sync-ntp${connParam}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
+          'Authorization': `Bearer ${authToken}`,
+          'x-connection-id': activeConnectionId || ''
         },
         body: JSON.stringify({
           enable: enableState,
@@ -467,7 +516,7 @@ export default function DateTimeConfigTab({
             </div>
             <div className="flex flex-wrap items-baseline gap-2 pt-0.5">
               <span className="text-2xl sm:text-3xl font-mono font-black text-cyan-300 tracking-wide drop-shadow-[0_0_12px_rgba(6,182,212,0.4)]">
-                {serverInfo?.time || '00:00:00'}
+                {getLiveServerTime()}
               </span>
               <span className="text-[11px] font-mono font-medium text-cyan-200/90 px-2 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-500/30 shrink-0 inline-flex items-center shadow-sm">
                 {serverInfo?.utcOffset || 'UTC'}

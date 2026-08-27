@@ -25671,6 +25671,314 @@ app.delete("/api/matrix/wallpaper/delete", authenticateToken, checkPermission(["
 });
 
 /**
+ * System Date, Time, Timezone & NTP Management
+ */
+async function getSystemDateTimeInfo(targetConnInput?: any) {
+  const activeConn = targetConnInput || getActiveConnection();
+  const isRemote = activeConn && activeConn.id !== "local";
+  const serverName = activeConn ? (activeConn.name || activeConn.host || (isRemote ? "Remote Server" : "Local Host")) : "Local Host";
+
+  const defaultDT = getServerDateTime();
+  let date = defaultDT.serverDate;
+  let time = defaultDT.serverTime;
+  let timezone = defaultDT.serverTimezone;
+  let utcOffset = "+00:00";
+  let ntpEnabled = true;
+  let ntpSynchronized = true;
+  let timestamp = defaultDT.serverTimestamp;
+  let formatted = "";
+
+  try {
+    const rawOut = await runServerCommand(
+      'python3 -c "import datetime, time; now = datetime.datetime.now(); utcnow = datetime.datetime.utcnow(); diff = now - utcnow; total_sec = int(diff.total_seconds()); h = abs(total_sec) // 3600; m = (abs(total_sec) % 3600) // 60; sign = \'+\' if total_sec >= 0 else \'-\'; offset = f\'{sign}{h:02d}:{m:02d}\'; print(f\'DATE={now.strftime(\"%Y-%m-%d\")}\\nTIME={now.strftime(\"%H:%M:%S\")}\\nTIMESTAMP={int(time.time()*1000)}\\nOFFSET={offset}\')" 2>/dev/null || date +"DATE=%Y-%m-%d\nTIME=%H:%M:%S\nOFFSET=%z\nTIMESTAMP=%s000"',
+      activeConn
+    );
+
+    if (rawOut && rawOut.includes("=")) {
+      const lines = rawOut.split(/\r?\n/);
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("DATE=")) {
+          date = trimmed.split("=")[1].trim();
+        } else if (trimmed.startsWith("TIME=")) {
+          time = trimmed.split("=")[1].trim();
+        } else if (trimmed.startsWith("TIMESTAMP=")) {
+          const ts = parseInt(trimmed.split("=")[1].trim(), 10);
+          if (!isNaN(ts) && ts > 0) {
+            timestamp = ts < 10000000000 ? ts * 1000 : ts;
+          }
+        } else if (trimmed.startsWith("OFFSET=")) {
+          let off = trimmed.split("=")[1].trim();
+          if (off.length === 5 && (off.startsWith("+") || off.startsWith("-")) && !off.includes(":")) {
+            off = off.slice(0, 3) + ":" + off.slice(3);
+          }
+          if (off) utcOffset = off;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.log("Notice reading system date/time:", err.message);
+  }
+
+  // Get timezone and NTP status
+  try {
+    const tzOut = await runServerCommand(
+      "timedatectl show --no-pager 2>/dev/null || timedatectl status 2>/dev/null || cat /etc/timezone 2>/dev/null",
+      activeConn
+    );
+    if (tzOut) {
+      if (tzOut.includes("Timezone=")) {
+        const m = tzOut.match(/Timezone=([^\r\n]+)/);
+        if (m && m[1]) timezone = m[1].trim();
+      } else if (tzOut.includes("Time zone:")) {
+        const m = tzOut.match(/Time zone:\s*([^\s(]+)/);
+        if (m && m[1]) timezone = m[1].trim();
+      } else if (tzOut.trim() && !tzOut.includes(" ") && tzOut.includes("/")) {
+        timezone = tzOut.trim();
+      }
+
+      if (tzOut.includes("NTP=")) {
+        const m = tzOut.match(/NTP=([^\r\n]+)/);
+        if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "yes";
+      } else if (tzOut.includes("NTP enabled:")) {
+        const m = tzOut.match(/NTP enabled:\s*([^\r\n]+)/);
+        if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "yes";
+      } else if (tzOut.includes("NTP service:")) {
+        const m = tzOut.match(/NTP service:\s*([^\r\n]+)/);
+        if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "active";
+      }
+
+      if (tzOut.includes("NTPSynchronized=")) {
+        const m = tzOut.match(/NTPSynchronized=([^\r\n]+)/);
+        if (m && m[1]) ntpSynchronized = m[1].trim().toLowerCase() === "yes";
+      } else if (tzOut.includes("System clock synchronized:")) {
+        const m = tzOut.match(/System clock synchronized:\s*([^\r\n]+)/);
+        if (m && m[1]) ntpSynchronized = m[1].trim().toLowerCase() === "yes";
+      }
+    }
+  } catch (err: any) {
+    console.log("Notice reading timezone/ntp:", err.message);
+  }
+
+  try {
+    formatted = new Date(timestamp).toUTCString();
+  } catch (e) {
+    formatted = date + " " + time + " (" + timezone + ")";
+  }
+
+  return {
+    success: true,
+    date,
+    time,
+    timezone,
+    utcOffset,
+    ntpEnabled,
+    ntpSynchronized,
+    timestamp,
+    formatted,
+    isRemote,
+    serverName
+  };
+}
+
+// GET /api/system/datetime
+app.get("/api/system/datetime", async (req: any, res: any) => {
+  try {
+    const connId = req.query?.connId || req.headers["x-connection-id"];
+    let targetConn = undefined;
+    if (connId) {
+      const db = readDb();
+      targetConn = (db.connections || []).find((c: any) => c.id === connId);
+    }
+    const data = await getSystemDateTimeInfo(targetConn);
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: "Failed to retrieve server date/time: " + err.message });
+  }
+});
+
+// POST /api/system/datetime/set-time
+app.post("/api/system/datetime/set-time", async (req: any, res: any) => {
+  try {
+    const username = req.user?.username || "admin";
+    const { date, time, syncHardwareClock } = req.body;
+    if (!date || !time) {
+      return res.status(400).json({ success: false, error: "Date and time are required (YYYY-MM-DD and HH:MM:SS)" });
+    }
+
+    const connId = req.query?.connId || req.headers["x-connection-id"];
+    let targetConn = undefined;
+    if (connId) {
+      const db = readDb();
+      targetConn = (db.connections || []).find((c: any) => c.id === connId);
+    }
+    const activeConn = targetConn || getActiveConnection();
+    const executionSteps: string[] = [];
+
+    executionSteps.push(`[Step 1] Request received to set server date and time to ${date} ${time}`);
+    executionSteps.push("[Step 2] Disabling NTP synchronization temporarily...");
+    await runServerCommand("timedatectl set-ntp false 2>/dev/null || true", activeConn);
+
+    executionSteps.push(`[Step 3] Applying manual date & time: ${date} ${time}...`);
+    const setRes = await runServerCommand(`timedatectl set-time "${date} ${time}" 2>/dev/null || date -s "${date} ${time}"`, activeConn);
+    if (setRes && setRes.trim()) {
+      executionSteps.push(`[Output] ${setRes.trim()}`);
+    }
+
+    if (syncHardwareClock) {
+      executionSteps.push("[Step 4] Synchronizing hardware real-time clock (RTC / hwclock --systohc)...");
+      const hwRes = await runServerCommand("hwclock --systohc 2>/dev/null || true", activeConn);
+      if (hwRes && hwRes.trim()) {
+        executionSteps.push(`[Output] ${hwRes.trim()}`);
+      }
+    }
+
+    executionSteps.push("[Step 5] Server date and time updated successfully.");
+
+    const db = readDb();
+    db.auditLogs.unshift({
+      id: "log-" + Date.now(),
+      timestamp: new Date().toISOString(),
+      username,
+      action: "Set Server Date & Time",
+      target: `${date} ${time}`,
+      status: "success",
+      details: `Set server manual time to ${date} ${time} (RTC sync: ${!!syncHardwareClock})`
+    });
+    writeDb(db);
+
+    const updated = await getSystemDateTimeInfo(activeConn);
+    res.json({
+      success: true,
+      ...updated,
+      executionSteps,
+      message: "Server date and time set successfully"
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: "Failed to set server date and time: " + err.message });
+  }
+});
+
+// POST /api/system/datetime/set-timezone
+app.post("/api/system/datetime/set-timezone", async (req: any, res: any) => {
+  try {
+    const username = req.user?.username || "admin";
+    const { timezone } = req.body;
+    if (!timezone || typeof timezone !== "string") {
+      return res.status(400).json({ success: false, error: "Valid timezone string is required" });
+    }
+
+    const connId = req.query?.connId || req.headers["x-connection-id"];
+    let targetConn = undefined;
+    if (connId) {
+      const db = readDb();
+      targetConn = (db.connections || []).find((c: any) => c.id === connId);
+    }
+    const activeConn = targetConn || getActiveConnection();
+    const executionSteps: string[] = [];
+
+    executionSteps.push(`[Step 1] Request received to set server timezone to ${timezone}`);
+    executionSteps.push(`[Step 2] Executing timedatectl set-timezone ${timezone}...`);
+
+    const tzRes = await runServerCommand(
+      `timedatectl set-timezone "${timezone}" 2>/dev/null || (ln -sf "/usr/share/zoneinfo/${timezone}" /etc/localtime && echo "${timezone}" > /etc/timezone)`,
+      activeConn
+    );
+    if (tzRes && tzRes.trim()) {
+      executionSteps.push(`[Output] ${tzRes.trim()}`);
+    }
+
+    executionSteps.push("[Step 3] Timezone successfully configured.");
+
+    const db = readDb();
+    db.auditLogs.unshift({
+      id: "log-" + Date.now(),
+      timestamp: new Date().toISOString(),
+      username,
+      action: "Set Server Timezone",
+      target: timezone,
+      status: "success",
+      details: `Configured server system timezone to ${timezone}`
+    });
+    writeDb(db);
+
+    const updated = await getSystemDateTimeInfo(activeConn);
+    res.json({
+      success: true,
+      ...updated,
+      executionSteps,
+      message: `Server timezone set to ${timezone}`
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: "Failed to set server timezone: " + err.message });
+  }
+});
+
+// POST /api/system/datetime/sync-ntp
+app.post("/api/system/datetime/sync-ntp", async (req: any, res: any) => {
+  try {
+    const username = req.user?.username || "admin";
+    const { enable, ntpServer } = req.body;
+    const isEnable = enable !== false;
+    const targetPool = (ntpServer || "pool.ntp.org").trim();
+
+    const connId = req.query?.connId || req.headers["x-connection-id"];
+    let targetConn = undefined;
+    if (connId) {
+      const db = readDb();
+      targetConn = (db.connections || []).find((c: any) => c.id === connId);
+    }
+    const activeConn = targetConn || getActiveConnection();
+    const executionSteps: string[] = [];
+
+    if (isEnable) {
+      executionSteps.push(`[Step 1] Enabling NTP network time synchronization (target pool: ${targetPool})...`);
+      const ntpRes = await runServerCommand(
+        `timedatectl set-ntp true 2>/dev/null || systemctl restart systemd-timesyncd 2>/dev/null || chronyc makestep 2>/dev/null || ntpdate -u "${targetPool}" 2>/dev/null || true`,
+        activeConn
+      );
+      if (ntpRes && ntpRes.trim()) {
+        executionSteps.push(`[Output] ${ntpRes.trim()}`);
+      }
+      executionSteps.push("[Step 2] NTP synchronization enabled and triggered.");
+    } else {
+      executionSteps.push("[Step 1] Disabling NTP automatic time synchronization...");
+      const ntpRes = await runServerCommand(
+        "timedatectl set-ntp false 2>/dev/null || systemctl stop systemd-timesyncd 2>/dev/null || true",
+        activeConn
+      );
+      if (ntpRes && ntpRes.trim()) {
+        executionSteps.push(`[Output] ${ntpRes.trim()}`);
+      }
+      executionSteps.push("[Step 2] NTP synchronization disabled.");
+    }
+
+    const db = readDb();
+    db.auditLogs.unshift({
+      id: "log-" + Date.now(),
+      timestamp: new Date().toISOString(),
+      username,
+      action: isEnable ? "Enable NTP Sync" : "Disable NTP Sync",
+      target: targetPool,
+      status: "success",
+      details: `${isEnable ? "Enabled" : "Disabled"} automatic NTP synchronization`
+    });
+    writeDb(db);
+
+    const updated = await getSystemDateTimeInfo(activeConn);
+    res.json({
+      success: true,
+      ...updated,
+      executionSteps,
+      message: isEnable ? "NTP time synchronization enabled" : "NTP time synchronization disabled"
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: "Failed to update NTP synchronization: " + err.message });
+  }
+});
+
+
+/**
  * Synapse Password & Local/Active Directory Auth Provider Policy
  * Discovers and configures /etc/matrix-synapse/conf.d/password.yaml
  */

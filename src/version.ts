@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.19";
+export const PANEL_VERSION = "2.38.20";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.20",
+    date: "2026-08-27",
+    title: "Restore Remote Server Date & Time API Endpoints & Real-Time Clock Synchronization",
+    changes: [
+      "Implemented /api/system/datetime Endpoints: Restored GET /api/system/datetime, POST /api/system/datetime/set-time, POST /api/system/datetime/set-timezone, and POST /api/system/datetime/sync-ntp with support for both remote SSH nodes and local host.",
+      "Live Server Clock Engine: Enhanced the digital clock widget to calculate live moving seconds based on the remote server's actual timestamp and timezone with automatic background resync.",
+      "Connection-Aware Operations: Configured all datetime endpoints and requests to honor the active remote connection ID via query and header parameters."
+    ]
+  },
   {
     version: "2.38.19",
     date: "2026-08-27",
