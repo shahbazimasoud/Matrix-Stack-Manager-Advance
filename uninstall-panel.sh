@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Raven Matrix Stack Manager - Interactive VPS Uninstaller
+# Raven Matrix Stack Manager - Interactive VPS Uninstaller & Cleanup Suite
 # ==============================================================================
 
 set -eo pipefail
@@ -19,7 +19,7 @@ log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-clear
+clear 2>/dev/null || true
 echo -e "${RED}"
 cat << 'EOF'
 ======================================================================
@@ -31,6 +31,7 @@ cat << 'EOF'
   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═══╝  ╚══════╝╚═╝  ╚═══╝
 
         RAVEN MATRIX STACK MANAGER PANEL - VPS UNINSTALLER
+    Repository: https://github.com/shahbazimasoud/Matrix-Stack-Manager
     Developer: Masoud Shahbazi (https://www.linkedin.com/in/masoudshahbazi/)
 ======================================================================
 EOF
@@ -43,35 +44,57 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 INSTALL_DIR="/opt/matrix-manager"
+NON_INTERACTIVE=false
+PRESERVE_DATA=true
 
-# Prompt for confirmation BEFORE stopping services, backing up, or deleting files
-echo -e "\n${YELLOW}Would you like to delete the installation directory completely?${NC}"
-echo -e "${RED}[WARNING] This will permanently delete all panel databases, connections, and files inside $INSTALL_DIR.${NC}"
+# Parse CLI flags
+for arg in "$@"; do
+  case $arg in
+    -y|--yes|--force|-f|--non-interactive)
+      NON_INTERACTIVE=true
+      ;;
+    --preserve-data)
+      PRESERVE_DATA=true
+      NON_INTERACTIVE=true
+      ;;
+    --purge-all)
+      PRESERVE_DATA=false
+      ;;
+    DELETE)
+      NON_INTERACTIVE=true
+      ;;
+  esac
+done
 
-CONFIRM_DELETE=""
-if [ -t 0 ]; then
-  printf "%s" "Type 'DELETE' to confirm full deletion, or anything else to keep the files: "
-  read -r CONFIRM_DELETE
-elif [ -e /dev/tty ]; then
-  printf "%s" "Type 'DELETE' to confirm full deletion, or anything else to keep the files: " > /dev/tty
-  read -r CONFIRM_DELETE < /dev/tty || CONFIRM_DELETE=""
-else
-  log_error "Interactive terminal (TTY) not found. Cannot prompt for confirmation."
-  exit 1
-fi
+if [ "$NON_INTERACTIVE" = false ]; then
+  echo -e "\n${YELLOW}Would you like to delete the installation directory completely?${NC}"
+  echo -e "${RED}[WARNING] All panel user accounts and server connections will be automatically backed up to /etc/matrix-manager-backup before removal.${NC}"
 
-if [ "$CONFIRM_DELETE" != "DELETE" ]; then
-  echo ""
-  log_info "Uninstallation cancelled by user. No files or services were removed."
-  exit 0
+  CONFIRM_DELETE=""
+  if [ -t 0 ]; then
+    printf "%s" "Type 'DELETE' to confirm full uninstallation, or press Enter/anything else to cancel: "
+    read -r CONFIRM_DELETE
+  elif [ -e /dev/tty ]; then
+    printf "%s" "Type 'DELETE' to confirm full uninstallation, or press Enter/anything else to cancel: " > /dev/tty
+    read -r CONFIRM_DELETE < /dev/tty || CONFIRM_DELETE=""
+  else
+    log_info "Running in automated non-interactive mode. Proceeding with data backup & uninstallation..."
+    CONFIRM_DELETE="DELETE"
+  fi
+
+  if [ "$CONFIRM_DELETE" != "DELETE" ]; then
+    echo ""
+    log_info "Uninstallation cancelled by user. No files or services were removed."
+    exit 0
+  fi
 fi
 
 echo ""
-log_step "Confirmation received ('DELETE'). Proceeding with uninstallation..."
+log_step "Proceeding with uninstallation and data protection..."
 
 # 0. Backup Panel Data (Users, Passwords, Server Connections)
 BACKUP_DIR="/etc/matrix-manager-backup"
-log_step "Creating persistent backup of panel accounts and server connections..."
+log_step "Creating persistent backup of panel accounts and server connections in $BACKUP_DIR..."
 mkdir -p "$BACKUP_DIR"
 
 if [ -f "$INSTALL_DIR/db/panel_data.json" ]; then
@@ -86,19 +109,19 @@ fi
 
 # 1. Stop and Disable Systemd Service
 log_step "Stopping Matrix Manager Service..."
-if systemctl is-active --quiet matrix-manager; then
-  systemctl stop matrix-manager || log_warning "Failed to stop service."
+if systemctl is-active --quiet matrix-manager 2>/dev/null; then
+  systemctl stop matrix-manager 2>/dev/null || log_warning "Failed to stop service."
 fi
 
 log_step "Disabling Matrix Manager Service..."
 if systemctl is-enabled --quiet matrix-manager 2>/dev/null; then
-  systemctl disable matrix-manager || log_warning "Failed to disable service."
+  systemctl disable matrix-manager 2>/dev/null || log_warning "Failed to disable service."
 fi
 
 log_step "Removing Systemd Service Unit File..."
 if [ -f "/etc/systemd/system/matrix-manager.service" ]; then
   rm -f "/etc/systemd/system/matrix-manager.service"
-  systemctl daemon-reload
+  systemctl daemon-reload 2>/dev/null || true
   log_success "Systemd service removed."
 fi
 
@@ -110,7 +133,7 @@ if [ -f "/etc/nginx/sites-enabled/matrix-manager.conf" ] || [ -f "/etc/nginx/sit
   
   if command -v nginx &>/dev/null; then
     if nginx -t &>/dev/null; then
-      systemctl reload nginx || systemctl restart nginx || log_warning "Failed to reload Nginx."
+      systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || log_warning "Failed to reload Nginx."
       log_success "Nginx configuration updated and reloaded."
     fi
   fi
@@ -126,4 +149,4 @@ else
 fi
 
 log_success "UNINSTALLATION COMPLETED SUCCESSFULLY!"
-echo -e "Matrix Manager Panel has been removed from this server."
+echo -e "Matrix Manager Panel has been removed. All account backups are safely stored in $BACKUP_DIR/panel_data.json."

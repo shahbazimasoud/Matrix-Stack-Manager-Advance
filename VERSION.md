@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.38.30** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.31** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.31** - 2026-08-27
+- **Official Repository Synchronization & 2-Step Interactive Update Flow**:
+  - **Repository & Changelog Alignment**: Configured About Modal and System Update Suite to pull live GitHub commits and release notes directly from `github.com/shahbazimasoud/Matrix-Stack-Manager`.
+  - **2-Step Update Pipeline**: Configured the update system to execute `uninstall-panel.sh` (with persistent data backup) followed by `setup-panel.sh` installer refresh.
+  - **Interactive Terminal & Auto Update Options**: Added dual execution paths allowing 1-click automated update or interactive terminal console execution for password/confirmation prompts.
+  - **Data Preservation**: Protected panel user credentials, bcrypt password hashes, and remote server connections in `/etc/matrix-manager-backup` during the uninstallation/setup cycle.
 
 #### **v2.38.30** - 2026-08-27
 - **Comprehensive Bilingual Documentation & Feature Matrix in README.md**:
