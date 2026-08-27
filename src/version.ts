@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.27";
+export const PANEL_VERSION = "2.38.28";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -41,13 +41,13 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 
 export const VERSION_HISTORY: VersionEntry[] = [
   {
-    version: "2.38.27",
+    version: "2.38.28",
     date: "2026-08-27",
-    title: "Repository Migration & Version History Truncation",
+    title: "Production Stack Synchronization to Matrix-Stack-Manager",
     changes: [
-      "Target Repository Migration: Configured and pushed full production codebase to github.com/shahbazimasoud/Matrix-Stack-Manager.",
-      "Version History Streamlining: Retained only the latest version release information in the version history per project specifications.",
-      "Stability & Clean Build: Verified complete TypeScript compilation, health checks, and smooth Dev Server operation."
+      "Repository Synchronization: Successfully pushed and initialized full production codebase to github.com/shahbazimasoud/Matrix-Stack-Manager.",
+      "Streamlined Single-Version Manifest: Retained exclusively the active latest release in the version log.",
+      "Integrity Verification: Full validation of server, UI modules, and compilation passes."
     ]
   }
 ];
