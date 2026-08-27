@@ -1,3 +1,4 @@
+import PanelAnalyticsView from './PanelAnalyticsView';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -877,6 +878,17 @@ export default function ReportingPanel({
   lang = 'en',
   currentUser
 }: ReportingPanelProps) {
+  const [isRefreshingStats, setIsRefreshingStats] = useState(false);
+  const handleRefreshStats = async () => {
+    setIsRefreshingStats(true);
+    try {
+      await fetch('/api/matrix/stats', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+    } catch (e) {}
+    setTimeout(() => setIsRefreshingStats(false), 800);
+  };
+
   const translationsMap = {
     fa: faTranslations,
     en: enTranslations,
@@ -2015,206 +2027,15 @@ export default function ReportingPanel({
         
         {/* VIEW 1: PERFORMANCE ANALYTICS */}
         {activeSubTab === 'analytics' && (
-          <div className="space-y-6">
-            <div className={`flex items-center gap-3 pb-4 border-b border-white/5 ${isRtl ? 'flex-row-reverse text-right' : 'text-left'}`}>
-              <BarChart3 className="w-6 h-6 text-indigo-400" />
-              <div>
-                <h2 className="text-xl font-display font-bold text-white">{t.analyticsTitle}</h2>
-                <p className="text-xs text-slate-400">{t.analyticsSub}</p>
-              </div>
-            </div>
-
-            {stats ? (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* CPU Trend Line Chart */}
-                  <div className={`p-5 rounded-2xl border ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-                    <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                      <h4 className={`text-xs font-bold font-display uppercase tracking-wider ${isLightMode ? 'text-slate-700' : 'text-slate-400'} flex items-center gap-1.5 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                        <Cpu className="w-4 h-4 text-indigo-500" />
-                        {t.cpuUsage}
-                      </h4>
-                      <span className="text-xs font-semibold text-indigo-500">{stats.cpuUsage}% {t.live}</span>
-                    </div>
-                    <div className="h-48 w-full font-mono text-[10px]" dir="ltr">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={stats.trends}>
-                          <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
-                          <XAxis dataKey="time" stroke={isLightMode ? '#64748b' : '#64748b'} />
-                          <YAxis domain={[0, 100]} stroke={isLightMode ? '#64748b' : '#64748b'} />
-                          <Tooltip content={<CustomChartTooltip />} />
-                          <Line type="monotone" dataKey="cpu" stroke="#6366f1" strokeWidth={2.5} dot={false} activeDot={{ r: 6 }} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Memory Area Chart */}
-                  <div className={`p-5 rounded-2xl border ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-                    <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                      <h4 className={`text-xs font-bold font-display uppercase tracking-wider ${isLightMode ? 'text-slate-700' : 'text-slate-400'} flex items-center gap-1.5 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                        <History className="w-4 h-4 text-purple-500" />
-                        {t.memoryUsage}
-                      </h4>
-                      <span className="text-xs font-semibold text-purple-500">{(stats.memoryTotal * (stats.memoryUsage / 100)).toFixed(1)} GB / {stats.memoryTotal} GB</span>
-                    </div>
-                    <div className="h-48 w-full font-mono text-[10px]" dir="ltr">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={stats.trends}>
-                          <defs>
-                            <linearGradient id="colorMem" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#a855f7" stopOpacity={0.4}/>
-                              <stop offset="95%" stopColor="#a855f7" stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
-                          <XAxis dataKey="time" stroke="#64748b" />
-                          <YAxis domain={[0, 100]} stroke="#64748b" />
-                          <Tooltip content={<CustomChartTooltip />} />
-                          <Area type="monotone" dataKey="memory" stroke="#a855f7" fillOpacity={1} fill="url(#colorMem)" strokeWidth={2.5} />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Active Users Area Chart */}
-                <div className={`p-5 rounded-2xl border ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-                  <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                    <h4 className={`text-xs font-bold font-display uppercase tracking-wider ${isLightMode ? 'text-slate-700' : 'text-slate-400'} flex items-center gap-1.5 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                      <Users className="w-4 h-4 text-emerald-500" />
-                      {t.threadsTitle}
-                    </h4>
-                    <span className="text-xs font-semibold text-emerald-500">{stats.activeUsers} {t.syncing}</span>
-                  </div>
-                  <div className="h-48 w-full font-mono text-[10px]" dir="ltr">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={stats.trends}>
-                        <defs>
-                          <linearGradient id="colorUsers" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
-                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
-                        <XAxis dataKey="time" stroke="#64748b" />
-                        <YAxis stroke="#64748b" />
-                        <Tooltip content={<CustomChartTooltip />} />
-                        <Area type="monotone" dataKey="activeUsers" stroke="#10b981" fillOpacity={1} fill="url(#colorUsers)" strokeWidth={2.5} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                {/* Network Traffic & Disk IOPS Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Network Speed Chart */}
-                  <div className={`p-5 rounded-2xl border ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-                    <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                      <h4 className={`text-xs font-bold font-display uppercase tracking-wider ${isLightMode ? 'text-slate-700' : 'text-slate-400'} flex items-center gap-1.5 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                        <Wifi className="w-4 h-4 text-cyan-500" />
-                        {t.networkTitle}
-                      </h4>
-                      <div className={`flex items-center gap-2 text-[11px] font-semibold font-mono ${isRtl ? 'flex-row-reverse' : ''}`}>
-                        <span className="text-teal-500 flex items-center gap-0.5">
-                          <ArrowDownLeft className="w-3 h-3" /> ↓ {stats.networkIn || 280} KB/s
-                        </span>
-                        <span className="text-indigo-500 flex items-center gap-0.5">
-                          <ArrowUpRight className="w-3 h-3" /> ↑ {stats.networkOut || 540} KB/s
-                        </span>
-                      </div>
-                    </div>
-                    <div className="h-48 w-full font-mono text-[10px]" dir="ltr">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={stats.trends}>
-                          <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
-                          <XAxis dataKey="time" stroke="#64748b" />
-                          <YAxis stroke="#64748b" />
-                          <Tooltip content={<CustomChartTooltip />} />
-                          <Line type="monotone" name={t.downloadSpeed} dataKey="networkIn" stroke="#14b8a6" strokeWidth={2} dot={false} />
-                          <Line type="monotone" name={t.uploadSpeed} dataKey="networkOut" stroke="#6366f1" strokeWidth={2} dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Disk IOPS and Latency Chart */}
-                  <div className={`p-5 rounded-2xl border ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-                    <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                      <h4 className={`text-xs font-bold font-display uppercase tracking-wider ${isLightMode ? 'text-slate-700' : 'text-slate-400'} flex items-center gap-1.5 ${isRtl ? 'flex-row-reverse' : ''}`}>
-                        <Gauge className="w-4 h-4 text-amber-500" />
-                        {t.diskIopsTitle}
-                      </h4>
-                      <div className={`flex items-center gap-2 text-[11px] font-semibold font-mono ${isRtl ? 'flex-row-reverse' : ''}`}>
-                        <span className="text-amber-500">
-                          IOPS: {stats.diskIops || 240} op/s
-                        </span>
-                        <span className="text-rose-500">
-                          Latency: {stats.diskLatencyMs || 1.1} ms
-                        </span>
-                      </div>
-                    </div>
-                    <div className="h-48 w-full font-mono text-[10px]" dir="ltr">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={stats.trends}>
-                          <defs>
-                            <linearGradient id="colorIops" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
-                              <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
-                          <XAxis dataKey="time" stroke="#64748b" />
-                          <YAxis yAxisId="left" stroke="#f59e0b" />
-                          <YAxis yAxisId="right" orientation="right" stroke="#f43f5e" domain={[0, 10]} />
-                          <Tooltip content={<CustomChartTooltip />} />
-                          <Area yAxisId="left" type="monotone" name={t.iopsLabel} dataKey="diskIops" stroke="#f59e0b" fillOpacity={1} fill="url(#colorIops)" strokeWidth={2} />
-                          <Line yAxisId="right" type="monotone" name={t.latencyLabel} dataKey="diskLatencyMs" stroke="#f43f5e" strokeWidth={2} dot={false} />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="p-5 rounded-2xl bg-black/25 border border-white/5 space-y-4">
-                    <div className="flex justify-between items-center">
-                      <div className="h-4 w-32 bg-slate-800/20 rounded border border-white/[0.03] relative overflow-hidden">
-                        <div className="shimmer-light-beam" />
-                      </div>
-                      <div className="h-4 w-16 bg-slate-800/20 rounded border border-white/[0.03] relative overflow-hidden">
-                        <div className="shimmer-light-beam" />
-                      </div>
-                    </div>
-                    <div className="h-48 w-full bg-slate-900/20 rounded-xl relative overflow-hidden border border-white/[0.03] flex items-center justify-center">
-                      <div className="shimmer-light-beam" />
-                      <span className="text-xs font-mono text-slate-500/70 z-10">{t.loadingStream}</span>
-                    </div>
-                  </div>
-
-                  <div className="p-5 rounded-2xl bg-black/25 border border-white/5 space-y-4">
-                    <div className="flex justify-between items-center">
-                      <div className="h-4 w-32 bg-slate-800/20 rounded border border-white/[0.03] relative overflow-hidden">
-                        <div className="shimmer-light-beam" />
-                      </div>
-                      <div className="h-4 w-20 bg-slate-800/20 rounded border border-white/[0.03] relative overflow-hidden">
-                        <div className="shimmer-light-beam" />
-                      </div>
-                    </div>
-                    <div className="h-48 w-full bg-slate-900/20 rounded-xl relative overflow-hidden border border-white/[0.03] flex items-center justify-center">
-                      <div className="shimmer-light-beam" />
-                      <span className="text-xs font-mono text-slate-500/70 z-10">{t.loadingStream}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <PanelAnalyticsView
+            stats={stats}
+            isLightMode={isLightMode}
+            lang={lang}
+            onManualRefresh={handleRefreshStats}
+            isRefreshing={isRefreshingStats}
+          />
         )}
 
-        {/* VIEW 2: ROLE-BASED ACCESS CONTROL (RBAC) */}
         {activeSubTab === 'rbac' && (
           <div className="space-y-6">
             <div className={`flex items-center gap-3 pb-4 border-b border-white/5 ${isRtl ? 'flex-row-reverse text-right' : 'text-left'}`}>
