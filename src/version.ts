@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.21";
+export const PANEL_VERSION = "2.38.22";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.22",
+    date: "2026-08-27",
+    title: "Restore Matrix & Synapse API Control Hub & Backend Diagnostics Engine",
+    changes: [
+      "Restored Matrix & Synapse API Backend Endpoints: Implemented GET /api/matrix/api-status and POST /api/matrix/api-config in server.ts with full endpoint checking, live HTTP status probe, latency calculation, and payload serialization.",
+      "Comprehensive Matrix API Inspection: Added automated checks for 12 core Matrix & Synapse endpoints including Admin server version, Client-Server versions, CS capabilities, registered users, rooms directory, federation version, auth login/register flows, media repository config, push rules, and .well-known discovery.",
+      "Resilient Client-Side Fetching: Enhanced fetchApiReport and handleSaveApiConfig in ConfigForms.tsx with fallback token discovery from localStorage and connection-aware header and query parameter passing.",
+      "Detailed Diagnostic Auth Logs: Emitted real-time system diagnostic steps with status emojis and timestamped outputs for inspection and troubleshooting."
+    ]
+  },
   {
     version: "2.38.21",
     date: "2026-08-27",

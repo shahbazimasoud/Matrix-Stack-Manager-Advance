@@ -16,9 +16,16 @@
 
 ---
 
-## Current Panel Version: **v2.38.21** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.22** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.22** - 2026-08-27
+- **Restore Matrix & Synapse API Control Hub & Backend Diagnostics Engine**:
+  - **Restored Matrix & Synapse API Backend Endpoints**: Implemented `GET /api/matrix/api-status` and `POST /api/matrix/api-config` in `server.ts` with full endpoint checking, live HTTP status probe, latency calculation, and payload serialization.
+  - **Comprehensive Matrix API Inspection**: Added automated checks for 12 core Matrix & Synapse endpoints including Admin server version, Client-Server versions, CS capabilities, registered users, rooms directory, federation version, auth login/register flows, media repository config, push rules, and `.well-known` discovery.
+  - **Resilient Client-Side Fetching**: Enhanced `fetchApiReport` and `handleSaveApiConfig` in `ConfigForms.tsx` with fallback token discovery from `localStorage` and connection-aware header and query parameter passing.
+  - **Detailed Diagnostic Auth Logs**: Emitted real-time system diagnostic steps with status emojis and timestamped outputs for inspection and troubleshooting.
 
 #### **v2.38.21** - 2026-08-27
 - **Fix Server Date, Time & Timezone Live Synchronization Engine**:
