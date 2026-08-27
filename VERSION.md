@@ -1,7 +1,6 @@
 # Raven Matrix Admin Panel - Versioning & Changelog
 
 ## ⚠️ MANDATORY RULE FOR AI AGENTS & DEVELOPERS
-
 > **CRITICAL RULE:** Whenever you make ANY code modification, feature addition, bug fix, or UI change to this panel, you **MUST** update and increment the version number!
 
 ### How to Increment Version:
@@ -16,9 +15,15 @@
 
 ---
 
-## Current Panel Version: **v2.38.29** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.30** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.30** - 2026-08-27
+- **Comprehensive Bilingual Documentation & Feature Matrix in README.md**:
+  - **Extensive Capabilities & Feature Matrix**: Documented all 8 functional pillars including real-time telemetry, service orchestration, remote agent cluster management, deep configuration forms, user & room administration, granular RBAC, web terminal, and spatial UI.
+  - **Dual Language Sectioning**: Authored complete, structured, professional English documentation followed by the exact equivalent in Persian (فارسی).
+  - **Repository & Branch Synchronization**: Pushed updated documentation and version manifest directly to the master branch.
 
 #### **v2.38.29** - 2026-08-27
 - **Documentation & Installer Links Alignment for Matrix-Stack-Manager**:

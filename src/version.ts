@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.29";
+export const PANEL_VERSION = "2.38.30";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.30",
+    date: "2026-08-27",
+    title: "Comprehensive Bilingual Documentation & Feature Matrix in README.md",
+    changes: [
+      "Extensive Capabilities & Feature Matrix: Documented all 8 functional pillars including real-time telemetry, service orchestration, remote agent cluster management, deep configuration forms, user & room administration, granular RBAC, web terminal, and spatial UI.",
+      "Dual Language Sectioning: Authored complete, structured, professional English documentation followed by the exact equivalent in Persian (فارسی).",
+      "Repository & Branch Synchronization: Pushed updated documentation and version manifest directly to the master branch."
+    ]
+  },
   {
     version: "2.38.29",
     date: "2026-08-27",
