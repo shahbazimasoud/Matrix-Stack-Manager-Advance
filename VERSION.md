@@ -16,9 +16,14 @@
 
 ---
 
-## Current Panel Version: **v2.38.24** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.25** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.25** - 2026-08-27
+- **High-Contrast Chart Tooltip Text Brightness in Light Theme**:
+  - **Ultra-Bright Tooltip Text in Light Mode**: Overrode global light theme text darkening rules for chart hover tooltips to ensure labels, metrics, timestamps, and badges are crystal clear and bright on dark HUD cards.
+  - **Inline & Explicit Contrast Protection**: Added high-specificity CSS rules and direct inline styles ensuring labels (`#f1f5f9`), timestamps (`#38bdf8`), and metric values render with vivid contrast and drop shadows in all themes.
 
 #### **v2.38.24** - 2026-08-27
 - **High-Contrast Chart Hover Tooltip Styling & Contrast Fix**:

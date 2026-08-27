@@ -438,18 +438,24 @@ const analyticsTranslations = {
 const CustomChartTooltip = ({ active, payload, label, isLightMode = false }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className={`p-3.5 rounded-2xl border shadow-2xl backdrop-blur-md text-left dir-ltr min-w-[170px] pointer-events-none z-50 transition-all ${
-        isLightMode 
-          ? 'bg-slate-900/98 border-slate-700 text-white shadow-2xl shadow-slate-900/40' 
-          : 'bg-slate-950/98 border-slate-700/90 text-white shadow-2xl shadow-black/80'
-      }`}>
+      <div 
+        className="chart-custom-tooltip p-3.5 rounded-2xl border shadow-2xl backdrop-blur-md text-left dir-ltr min-w-[175px] pointer-events-none z-50 transition-all"
+        style={{
+          backgroundColor: '#090d16',
+          borderColor: '#334155',
+          color: '#ffffff',
+          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08)'
+        }}
+      >
         {label && (
           <div className="flex items-center justify-between gap-2 border-b border-slate-700/80 pb-1.5 mb-2 font-mono">
-            <span className="text-[11px] font-extrabold text-cyan-300 tracking-wide flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="tooltip-header-time text-[11px] font-extrabold tracking-wide flex items-center gap-1.5" style={{ color: '#38bdf8' }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shadow-sm shadow-cyan-400" />
               {label}
             </span>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Metrics</span>
+            <span className="tooltip-header-badge text-[10px] font-bold uppercase tracking-wider" style={{ color: '#94a3b8' }}>
+              Metrics
+            </span>
           </div>
         )}
         <div className="space-y-1.5">
@@ -471,11 +477,17 @@ const CustomChartTooltip = ({ active, payload, label, isLightMode = false }: any
 
             return (
               <div key={`item-${index}`} className="flex items-center justify-between gap-3 text-xs font-bold font-mono">
-                <span className="flex items-center gap-1.5 text-slate-200">
+                <span className="flex items-center gap-1.5 text-slate-100 font-bold" style={{ color: '#f1f5f9' }}>
                   <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm ring-1 ring-white/30" style={{ backgroundColor: color }} />
-                  <span className="text-slate-100 font-bold">{entry.name || entry.dataKey}:</span>
+                  <span className="tooltip-item-name font-bold" style={{ color: '#f1f5f9' }}>{entry.name || entry.dataKey}:</span>
                 </span>
-                <span className="font-extrabold text-xs tracking-tight drop-shadow-sm ml-2" style={{ color: color }}>
+                <span 
+                  className="tooltip-item-val font-black text-xs tracking-tight ml-2 drop-shadow-sm" 
+                  style={{ 
+                    color: color,
+                    textShadow: '0 1px 3px rgba(0,0,0,0.8)' 
+                  }}
+                >
                   {formattedVal} {unit}
                 </span>
               </div>

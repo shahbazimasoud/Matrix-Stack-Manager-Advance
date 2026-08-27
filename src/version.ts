@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.24";
+export const PANEL_VERSION = "2.38.25";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,15 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.25",
+    date: "2026-08-27",
+    title: "High-Contrast Chart Tooltip Text Brightness in Light Theme",
+    changes: [
+      "Ultra-Bright Tooltip Text in Light Mode: Overrode global light theme text darkening rules for chart hover tooltips to ensure labels, metrics, timestamps, and badges are crystal clear and bright on dark HUD cards.",
+      "Inline & Explicit Contrast Protection: Added high-specificity CSS rules and direct inline styles ensuring labels (#f1f5f9), timestamps (#38bdf8), and metric values render with vivid contrast and drop shadows in all themes."
+    ]
+  },
   {
     version: "2.38.24",
     date: "2026-08-27",
