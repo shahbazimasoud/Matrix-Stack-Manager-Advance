@@ -1,0 +1,6 @@
+{
+  "name": "Raven Matrix Admin Panel",
+  "description": "Production Matrix Synapse & Element Web management panel with granular policy, SSL certificate, server notices, and worker orchestration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
