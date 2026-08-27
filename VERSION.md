@@ -16,9 +16,15 @@
 
 ---
 
-## Current Panel Version: **v2.38.25** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.26** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.26** - 2026-08-27
+- **Server Restoration, Dev Server Bootstrap & Zero-Error Compilation**:
+  - **Server Integrity Restoration**: Fully decompressed and restored the full `server.ts`, `ConfigForms.tsx`, and `KetesaAdmin.tsx` codebases.
+  - **Dev Server Stability**: Standardized the dev startup script in `package.json` to direct `tsx` execution, resolving startup interruptions.
+  - **Health & Compilation**: Verified 100% clean TypeScript linting and verified server responsiveness on local development port 3000.
 
 #### **v2.38.25** - 2026-08-27
 - **High-Contrast Chart Tooltip Text Brightness in Light Theme**:

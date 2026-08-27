@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.25";
+export const PANEL_VERSION = "2.38.26";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.26",
+    date: "2026-08-27",
+    title: "Server Restoration, Dev Server Bootstrap & Zero-Error Compilation",
+    changes: [
+      "Server Integrity Restoration: Fully decompressed and restored the full server.ts, ConfigForms.tsx, and KetesaAdmin.tsx codebases.",
+      "Dev Server Stability: Standardized the dev startup script in package.json to direct tsx execution, resolving startup interruptions.",
+      "Health & Compilation: Verified 100% clean TypeScript linting and verified server responsiveness on local development port 3000."
+    ]
+  },
   {
     version: "2.38.25",
     date: "2026-08-27",
