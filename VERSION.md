@@ -15,9 +15,15 @@
 
 ---
 
-## Current Panel Version: **v2.38.31** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.32** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.32** - 2026-08-27
+- **Enforced Session Termination & Login Redirection on System Update**:
+  - **Session Security Hardening**: Active user authentication sessions are now immediately invalidated across local storage, cookies, and session storage upon panel update completion.
+  - **Automatic Login Redirection**: Users are cleanly redirected to the login screen with a clear notification after system update execution.
+  - **Real-time Multi-client Broadcast**: Server notifies all connected sessions via WebSocket when an update completes to ensure consistent state and immediate re-authentication.
 
 #### **v2.38.31** - 2026-08-27
 - **Official Repository Synchronization & 2-Step Interactive Update Flow**:

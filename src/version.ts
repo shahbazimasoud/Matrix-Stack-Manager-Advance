@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.31";
+export const PANEL_VERSION = "2.38.32";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.32",
+    date: "2026-08-27",
+    title: "Enforced Session Termination & Login Redirection on System Update",
+    changes: [
+      "Session Security Hardening: Active user authentication sessions are now immediately invalidated across local storage and cookies upon panel update completion.",
+      "Automatic Login Redirection: Users are cleanly redirected to the login screen with clear notification after system update execution.",
+      "Real-time Multi-client Broadcast: Server notifies all connected sessions via WebSocket when an update completes to ensure consistent state and immediate re-authentication."
+    ]
+  },
   {
     version: "2.38.31",
     date: "2026-08-27",

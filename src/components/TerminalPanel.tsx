@@ -25,6 +25,7 @@ interface TerminalPanelProps {
   onTabChange?: (tab: 'console' | 'install' | 'updates' | 'element-synapse') => void;
   config?: MatrixConfig;
   activeConnection?: any;
+  onLogout?: () => void;
 }
 
 const UPDATE_UNINSTALL_CMD = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | sudo bash";
@@ -376,7 +377,8 @@ export default function TerminalPanel({
   initialTab,
   onTabChange,
   config,
-  activeConnection
+  activeConnection,
+  onLogout
 }: TerminalPanelProps) {
   const isRtl = ['fa', 'ar'].includes(lang);
   const hasWriteAccess = userRole !== 'Viewer';
@@ -858,14 +860,39 @@ export default function TerminalPanel({
         setUpdateAvailable(false);
         setCommitsBehind(0);
         setLatestCommits([]);
-        showToast('success', isRtl ? 'پنل با موفقیت بروزرسانی شد! در حال بارگذاری مجدد...' : 'Panel updated successfully! Reloading...');
+        
+        setUpdateLogs((prev) => [
+          ...prev, 
+          '# [SECURITY] Panel update applied successfully.',
+          '# [SECURITY] Active user session terminated. Redirecting to login page...'
+        ]);
+
+        showToast('success', isRtl ? 'پنل با موفقیت بروزرسانی شد! سشن کاربری بسته شد و در حال هدایت به صفحه ورود هستید...' : 'Panel updated successfully! User session terminated. Redirecting to login page...');
+        
+        // Terminate active local session & storage
+        try {
+          localStorage.removeItem('admin_token');
+          localStorage.removeItem('matrix_auth_token');
+          localStorage.removeItem('token');
+          sessionStorage.clear();
+        } catch (_) {}
+
+        // Invalidate session on server backend
+        fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+
+        // Invoke application logout handler
+        if (onLogout) {
+          onLogout();
+        }
+        window.dispatchEvent(new CustomEvent('panel_session_terminated', { detail: { reason: 'update' } }));
+
         setTimeout(() => {
           try {
-            window.location.reload();
+            window.location.href = window.location.origin + window.location.pathname;
           } catch (e) {
-            window.location.href = window.location.origin + window.location.pathname + window.location.search;
+            window.location.reload();
           }
-        }, 2000);
+        }, 1500);
       } else {
         const errData = await res.json();
         setUpdateLogs((prev) => [...prev, `[ERR] update failed: ${errData.error || 'Server error'}`]);

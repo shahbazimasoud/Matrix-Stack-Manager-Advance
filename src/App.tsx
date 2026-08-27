@@ -846,13 +846,32 @@ export default function App() {
         } else if (data.type === 'cmd_start') {
           setIsExecuting(true);
           setTerminalLogs(prev => [...prev, `\nroot@matrix-node:~# executing ${data.command}...`]);
+        } else if (data.type === 'session_terminated') {
+          setIsExecuting(false);
+          showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. جهت امنیت، سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Please log in again.');
+          handleLogout();
+          setTimeout(() => {
+            try {
+              window.location.href = window.location.origin + window.location.pathname;
+            } catch (_) {}
+          }, 1500);
         } else if (data.type === 'cmd_end') {
           setIsExecuting(false);
           setTerminalLogs(prev => [...prev, `\nCommand executed successfully. Exit code: ${data.code}`]);
-          // Re-sync all configurations
-          fetchConfig();
-          fetchLogs();
-          fetchBackups();
+          if (data.isUpdate) {
+            showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Redirecting to login...');
+            handleLogout();
+            setTimeout(() => {
+              try {
+                window.location.href = window.location.origin + window.location.pathname;
+              } catch (_) {}
+            }, 1500);
+          } else {
+            // Re-sync all configurations
+            fetchConfig();
+            fetchLogs();
+            fetchBackups();
+          }
         } else if (data.type === 'cmd_err') {
           setIsExecuting(false);
           setTerminalLogs(prev => [...prev, `\n❌ ERROR: ${data.text}`]);
@@ -1157,7 +1176,14 @@ export default function App() {
       }
     };
     window.addEventListener('sessionSettingsUpdated', handleSessionSettingsUpdate);
-    return () => window.removeEventListener('sessionSettingsUpdated', handleSessionSettingsUpdate);
+    const handleSessionTerminated = () => {
+      handleLogout();
+    };
+    window.addEventListener('panel_session_terminated', handleSessionTerminated);
+    return () => {
+      window.removeEventListener('sessionSettingsUpdated', handleSessionSettingsUpdate);
+      window.removeEventListener('panel_session_terminated', handleSessionTerminated);
+    };
   }, []);
 
   useEffect(() => {
@@ -3140,6 +3166,7 @@ export default function App() {
                 onTabChange={(tab) => setTerminalInitialTab(tab)}
                 config={config}
                 activeConnection={activeConnection}
+                onLogout={handleLogout}
               />
             )}
 

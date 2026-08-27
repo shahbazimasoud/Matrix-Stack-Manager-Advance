@@ -15899,9 +15899,22 @@ app.post("/api/system/update/apply", authenticateToken, checkPermission(["Owner"
       });
     });
 
-    logs.push("# Full system update finished successfully! The application will pick up all changes on reload.");
+    logs.push("# Full system update finished successfully! Terminating active user session and redirecting to login page.");
+    try {
+      broadcastWS({
+        type: "session_terminated",
+        reason: "panel_updated",
+        text: "System update completed successfully! Session closed for security. Redirecting to login page..."
+      });
+    } catch (_) {}
+    try {
+      res.clearCookie("token");
+      res.clearCookie("admin_token");
+      res.clearCookie("auth_token");
+    } catch (_) {}
     res.json({
       success: true,
+      sessionTerminated: true,
       logs
     });
   } catch (err: any) {
@@ -26633,8 +26646,9 @@ async function startServer() {
 
               proc2.on('close', (code2) => {
                 broadcastWS({ type: 'cmd_stdout', text: `>>> [Step 2/2] Installer script completed with code ${code2}.` });
-                broadcastWS({ type: 'cmd_stdout', text: '>>> System Update Complete! Changes will take effect on next reload.' });
-                broadcastWS({ type: 'cmd_end', code: code2 });
+                broadcastWS({ type: 'cmd_stdout', text: '>>> System Update Complete! Session closed for security. Redirecting to login...' });
+                broadcastWS({ type: 'session_terminated', reason: 'panel_updated', text: 'Panel updated successfully! Session closed. Please log in again.' });
+                broadcastWS({ type: 'cmd_end', code: code2, isUpdate: true });
               });
             });
           } else if (cmd === 'health_check') {
