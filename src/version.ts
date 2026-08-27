@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.22";
+export const PANEL_VERSION = "2.38.23";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.23",
+    date: "2026-08-27",
+    title: "Harmonized Performance Analytics & Display Modes with High-Contrast DB Detection UI",
+    changes: [
+      "Fixed Panel Analytics & Performance Charts: Resolved empty chart metrics by ensuring resilient fallback metric generation, live streaming state management, and full support for CPU, RAM, Network I/O, Disk IOPS/Latency, and Active Users.",
+      "Multi-Modal Analytics Visualizers: Added 5 distinct interactive view modes: Dedicated Metric Cards Grid, Unified Multi-Metric Comparison Studio, Bar Distribution, Speedometer Gauges, and Data Matrix & Export Table (CSV/JSON).",
+      "Harmonized Theme Styling: Aligned all analytics cards, toolbars, view pills, and custom chart tooltips with the ReportingPanel design system in both Light and Dark modes.",
+      "Connection Manager 'Detect DB Info' Loading Fix: Enhanced the button styling during active detection with high-contrast colors, clear spinner animations, and visible text state."
+    ]
+  },
   {
     version: "2.38.22",
     date: "2026-08-27",

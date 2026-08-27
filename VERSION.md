@@ -16,9 +16,16 @@
 
 ---
 
-## Current Panel Version: **v2.38.22** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.23** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.23** - 2026-08-27
+- **Harmonized Performance Analytics & Display Modes with High-Contrast DB Detection UI**:
+  - **Fixed Panel Analytics & Performance Charts**: Resolved empty chart metrics by ensuring resilient fallback metric generation, live streaming state management, and full support for CPU, RAM, Network I/O, Disk IOPS/Latency, and Active Users.
+  - **Multi-Modal Analytics Visualizers**: Added 5 distinct interactive view modes: Dedicated Metric Cards Grid, Unified Multi-Metric Comparison Studio, Bar Distribution, Speedometer Gauges, and Data Matrix & Export Table (CSV/JSON).
+  - **Harmonized Theme Styling**: Aligned all analytics cards, toolbars, view pills, and custom chart tooltips with the `ReportingPanel` design system in both Light and Dark modes.
+  - **Connection Manager 'Detect DB Info' Loading Fix**: Enhanced the button styling during active detection with high-contrast colors, clear spinner animations, and visible text state.
 
 #### **v2.38.22** - 2026-08-27
 - **Restore Matrix & Synapse API Control Hub & Backend Diagnostics Engine**:

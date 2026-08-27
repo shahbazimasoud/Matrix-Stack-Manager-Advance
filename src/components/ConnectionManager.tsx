@@ -1158,19 +1158,19 @@ export default function ConnectionManager({
                 disabled={isDetectingDb}
                 className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shrink-0 cursor-pointer shadow-md ${
                   isDetectingDb
-                    ? 'opacity-70 cursor-wait bg-slate-700 text-slate-300'
+                    ? 'cursor-wait bg-teal-600 text-white border border-teal-400 shadow-teal-500/30'
                     : 'bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-white hover:shadow-teal-500/25 active:scale-95'
                 }`}
               >
                 {isDetectingDb ? (
                   <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    {(t as any).detectingDb}
+                    <RefreshCw className="w-4 h-4 animate-spin text-white shrink-0" />
+                    <span className="text-white font-extrabold tracking-wide drop-shadow-sm">{(t as any).detectingDb}</span>
                   </>
                 ) : (
                   <>
-                    <Database className="w-3.5 h-3.5" />
-                    {(t as any).detectDbBtn}
+                    <Database className="w-4 h-4 text-white shrink-0" />
+                    <span className="text-white font-bold">{(t as any).detectDbBtn}</span>
                   </>
                 )}
               </button>

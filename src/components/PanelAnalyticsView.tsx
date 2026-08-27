@@ -435,12 +435,18 @@ const analyticsTranslations = {
   }
 };
 
-const CustomChartTooltip = ({ active, payload, label }: any) => {
+const CustomChartTooltip = ({ active, payload, label, isLightMode = false }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className="p-3.5 rounded-2xl bg-slate-900/95 border border-slate-700/80 shadow-2xl backdrop-blur-md text-left dir-ltr min-w-[160px] pointer-events-none z-50">
+      <div className={`p-3.5 rounded-2xl border shadow-2xl backdrop-blur-md text-left dir-ltr min-w-[170px] pointer-events-none z-50 transition-all ${
+        isLightMode 
+          ? 'bg-white/95 border-slate-200 text-slate-800 shadow-slate-300/40' 
+          : 'bg-slate-900/95 border-slate-700/80 text-white shadow-black/80'
+      }`}>
         {label && (
-          <p className="text-[11px] font-extrabold text-cyan-300 mb-2 border-b border-slate-700/80 pb-1 font-mono tracking-wide">
+          <p className={`text-[11px] font-extrabold mb-2 border-b pb-1 font-mono tracking-wide ${
+            isLightMode ? 'text-indigo-600 border-slate-200' : 'text-cyan-300 border-slate-700/80'
+          }`}>
             ⏱ {label}
           </p>
         )}
@@ -457,11 +463,11 @@ const CustomChartTooltip = ({ active, payload, label }: any) => {
             }
             return (
               <div key={`item-${index}`} className="flex items-center justify-between gap-3 text-xs font-bold font-mono">
-                <span className="flex items-center gap-1.5 text-slate-200">
+                <span className={`flex items-center gap-1.5 ${isLightMode ? 'text-slate-700' : 'text-slate-200'}`}>
                   <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: color }} />
-                  <span className="text-white">{entry.name || entry.dataKey}:</span>
+                  <span className={isLightMode ? 'text-slate-800' : 'text-white'}>{entry.name || entry.dataKey}:</span>
                 </span>
-                <span className="font-extrabold text-white text-xs tracking-tight" style={{ color: color }}>
+                <span className="font-extrabold text-xs tracking-tight" style={{ color: color }}>
                   {typeof entry.value === 'number' ? entry.value.toFixed(1) : entry.value} {unit}
                 </span>
               </div>
@@ -703,7 +709,7 @@ export default function PanelAnalyticsView({
             <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
             <XAxis dataKey="time" stroke="#64748b" />
             <YAxis domain={yDomain || ['auto', 'auto']} stroke="#64748b" />
-            <Tooltip content={<CustomChartTooltip />} />
+            <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
             <Bar dataKey={dataKey} fill={color} radius={[4, 4, 0, 0]} name={name || dataKey} unit={unit} />
           </BarChart>
         ) : type === 'line' ? (
@@ -711,7 +717,7 @@ export default function PanelAnalyticsView({
             <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
             <XAxis dataKey="time" stroke="#64748b" />
             <YAxis domain={yDomain || ['auto', 'auto']} stroke="#64748b" />
-            <Tooltip content={<CustomChartTooltip />} />
+            <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
             <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} name={name || dataKey} unit={unit} />
           </LineChart>
         ) : (
@@ -725,7 +731,7 @@ export default function PanelAnalyticsView({
             <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
             <XAxis dataKey="time" stroke="#64748b" />
             <YAxis domain={yDomain || ['auto', 'auto']} stroke="#64748b" />
-            <Tooltip content={<CustomChartTooltip />} />
+            <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
             <Area type="monotone" dataKey={dataKey} stroke={color} fill={`url(#grad_${dataKey})`} strokeWidth={2.5} name={name || dataKey} unit={unit} />
           </AreaChart>
         )}
@@ -735,245 +741,304 @@ export default function PanelAnalyticsView({
 
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
-      {/* Header Banner with Health Score & Quick Controls */}
-      <div className={`p-6 rounded-3xl border transition-all ${
-        isLightMode ? 'bg-gradient-to-r from-indigo-50/80 via-white to-purple-50/80 border-slate-200 shadow-sm' : 'bg-gradient-to-r from-indigo-950/20 via-slate-900/40 to-purple-950/20 border-white/10'
-      }`}>
-        <div className={`flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 ${isRtl ? 'text-right' : 'text-left'}`}>
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center shadow-inner">
-              <BarChart3 className="w-7 h-7 text-indigo-400" />
+      {/* SECTION 1: Standard Sub-Tab Header matching ReportingPanel */}
+      <div className={`flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b ${
+        isLightMode ? 'border-slate-200' : 'border-white/5'
+      } ${isRtl ? 'text-right' : 'text-left'}`}>
+        <div className={`flex items-center gap-3.5 ${isRtl ? 'flex-row-reverse' : ''}`}>
+          <div className={`p-2.5 rounded-2xl border transition-all ${
+            isLightMode 
+              ? 'bg-indigo-50 border-indigo-200 text-indigo-600 shadow-sm' 
+              : 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400'
+          }`}>
+            <BarChart3 className="w-6 h-6" />
+          </div>
+          <div>
+            <div className={`flex items-center gap-3 ${isRtl ? 'flex-row-reverse' : ''}`}>
+              <h2 className={`text-xl font-display font-bold ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+                {t.title}
+              </h2>
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono border ${
+                healthScore >= 80 
+                  ? (isLightMode ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30')
+                  : healthScore >= 50 
+                  ? (isLightMode ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-500/15 text-amber-400 border-amber-500/30')
+                  : (isLightMode ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-rose-500/15 text-rose-400 border-rose-500/30')
+              }`}>
+                <span className="w-2 h-2 rounded-full animate-pulse bg-current" />
+                {healthScore}% {healthScore >= 80 ? t.healthOptimal : healthScore >= 50 ? t.healthWarning : t.healthCritical}
+              </span>
             </div>
-            <div>
-              <div className="flex items-center gap-3">
-                <h2 className="text-2xl font-display font-bold text-white tracking-tight">{t.title}</h2>
-                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono ${
-                  healthScore >= 80 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
-                  healthScore >= 50 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' :
-                  'bg-rose-500/10 text-rose-400 border border-rose-500/30'
-                }`}>
-                  <span className="w-2 h-2 rounded-full animate-pulse bg-current" />
-                  {healthScore}% {healthScore >= 80 ? t.healthOptimal : healthScore >= 50 ? t.healthWarning : t.healthCritical}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1 max-w-2xl">{t.sub}</p>
-            </div>
+            <p className={`text-xs mt-0.5 ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.sub}</p>
+          </div>
+        </div>
+
+        {/* Live Streaming & Action Toolbar */}
+        <div className={`flex flex-wrap items-center gap-2 ${isRtl ? 'flex-row-reverse' : ''}`}>
+          <button
+            type="button"
+            onClick={() => setIsLiveStreaming(!isLiveStreaming)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+              isLiveStreaming 
+                ? (isLightMode ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100' : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25')
+                : (isLightMode ? 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100' : 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25')
+            }`}
+          >
+            {isLiveStreaming ? (
+              <>
+                <Pause className="w-3.5 h-3.5" />
+                <span>{t.pauseStream}</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3.5 h-3.5" />
+                <span>{t.resumeStream}</span>
+              </>
+            )}
+          </button>
+
+          {/* Refresh Interval Selector */}
+          <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-mono ${
+            isLightMode ? 'bg-slate-100 border-slate-300 text-slate-700' : 'bg-black/30 border-white/10 text-slate-300'
+          }`}>
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <select
+              value={refreshIntervalSec}
+              onChange={(e) => setRefreshIntervalSec(Number(e.target.value))}
+              className="bg-transparent focus:outline-none cursor-pointer text-xs font-semibold"
+            >
+              <option value={2} className={isLightMode ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'}>2 {t.sec}</option>
+              <option value={3} className={isLightMode ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'}>3 {t.sec}</option>
+              <option value={5} className={isLightMode ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'}>5 {t.sec}</option>
+              <option value={10} className={isLightMode ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'}>10 {t.sec}</option>
+            </select>
           </div>
 
-          {/* Live Streaming & Action Toolbar */}
-          <div className={`flex flex-wrap items-center gap-2.5 ${isRtl ? 'flex-row-reverse' : ''}`}>
+          {/* Manual Refresh Button */}
+          <button
+            type="button"
+            onClick={() => onManualRefresh && onManualRefresh()}
+            disabled={isRefreshing}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer disabled:opacity-50 ${
+              isLightMode 
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300' 
+                : 'bg-white/5 hover:bg-white/10 text-slate-200 border-white/10'
+            }`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
+            <span>{t.refreshNow}</span>
+          </button>
+
+          {/* Export CSV Button */}
+          <button
+            type="button"
+            onClick={handleExportCSV}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+              isLightMode 
+                ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200 shadow-sm' 
+                : 'bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border-indigo-500/30'
+            }`}
+            title={t.exportCsv}
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>CSV</span>
+          </button>
+        </div>
+      </div>
+
+      {/* SECTION 2: Display Mode Switcher & Time Range Selector */}
+      <div className={`flex flex-wrap items-center justify-between gap-4 p-2 rounded-2xl border ${
+        isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-white/[0.02] border-white/5'
+      } ${isRtl ? 'flex-row-reverse' : ''}`}>
+        <div className={`flex flex-wrap items-center gap-2 ${isRtl ? 'flex-row-reverse' : ''}`}>
+          <span className={`text-xs font-bold uppercase tracking-wider ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>
+            {t.viewMode}:
+          </span>
+          <div className={`flex flex-wrap items-center gap-1 p-1 rounded-xl border ${
+            isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/40 border-white/10'
+          }`}>
             <button
-              onClick={() => setIsLiveStreaming(!isLiveStreaming)}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
-                isLiveStreaming 
-                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25' 
-                  : 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25'
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'cards'
+                  ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/30'
+                  : isLightMode ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
-              {isLiveStreaming ? (
-                <>
-                  <Pause className="w-3.5 h-3.5" />
-                  <span>{t.pauseStream}</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5" />
-                  <span>{t.resumeStream}</span>
-                </>
-              )}
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>{t.viewCards}</span>
             </button>
 
-            {/* Refresh Interval Selector */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/10 bg-black/20 text-xs font-mono">
-              <Clock className="w-3.5 h-3.5 text-slate-400" />
-              <select
-                value={refreshIntervalSec}
-                onChange={(e) => setRefreshIntervalSec(Number(e.target.value))}
-                className="bg-transparent text-slate-300 focus:outline-none cursor-pointer text-xs font-semibold"
-              >
-                <option value={2} className="bg-slate-900">2 {t.sec}</option>
-                <option value={3} className="bg-slate-900">3 {t.sec}</option>
-                <option value={5} className="bg-slate-900">5 {t.sec}</option>
-                <option value={10} className="bg-slate-900">10 {t.sec}</option>
-              </select>
-            </div>
-
-            {/* Manual Refresh Button */}
             <button
-              onClick={() => onManualRefresh && onManualRefresh()}
-              disabled={isRefreshing}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 transition-all disabled:opacity-50"
+              type="button"
+              onClick={() => setViewMode('unified')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'unified'
+                  ? 'bg-purple-600 text-white shadow-sm shadow-purple-500/30'
+                  : isLightMode ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
-              <span>{t.refreshNow}</span>
+              <Layers className="w-3.5 h-3.5" />
+              <span>{t.viewUnified}</span>
             </button>
 
-            {/* Export Menu */}
             <button
-              onClick={handleExportCSV}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/25 transition-all"
-              title={t.exportCsv}
+              type="button"
+              onClick={() => setViewMode('bars')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'bars'
+                  ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-500/30'
+                  : isLightMode ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>CSV</span>
+              <BarChart2 className="w-3.5 h-3.5" />
+              <span>{t.viewBars}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setViewMode('gauges')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'gauges'
+                  ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-500/30'
+                  : isLightMode ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Gauge className="w-3.5 h-3.5" />
+              <span>{t.viewGauges}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setViewMode('matrix')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'matrix'
+                  ? 'bg-amber-600 text-white shadow-sm shadow-amber-500/30'
+                  : isLightMode ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Table className="w-3.5 h-3.5" />
+              <span>{t.viewMatrix}</span>
             </button>
           </div>
         </div>
 
-        {/* View Mode Switcher Pills (5 Display Modes) */}
-        <div className={`mt-6 pt-5 border-t border-white/10 flex flex-wrap items-center justify-between gap-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t.viewMode}:</span>
-            <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-2xl bg-black/30 border border-white/10">
+        {/* Time Range Filter Selector */}
+        <div className={`flex items-center gap-2 ${isRtl ? 'flex-row-reverse' : ''}`}>
+          <span className={`text-xs font-bold uppercase tracking-wider ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>
+            {t.timeRange}:
+          </span>
+          <div className={`flex items-center gap-1 p-1 rounded-xl border text-xs font-semibold ${
+            isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/30 border-white/10'
+          }`}>
+            {(['live', '15m', '1h', '24h', '7d'] as TimeRangeFilter[]).map((r) => (
               <button
-                onClick={() => setViewMode('cards')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  viewMode === 'cards'
-                    ? 'bg-indigo-600 text-white shadow-[0_0_12px_rgba(99,102,241,0.3)]'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                key={r}
+                type="button"
+                onClick={() => setTimeRange(r)}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  timeRange === r
+                    ? (isLightMode ? 'bg-indigo-600 text-white font-bold shadow-sm' : 'bg-white/20 text-white font-bold shadow-sm')
+                    : (isLightMode ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-slate-200')
                 }`}
               >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>{t.viewCards}</span>
+                {r === 'live' ? t.timeLive : r === '15m' ? t.time15m : r === '1h' ? t.time1h : r === '24h' ? t.time24h : t.time7d}
               </button>
-
-              <button
-                onClick={() => setViewMode('unified')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  viewMode === 'unified'
-                    ? 'bg-purple-600 text-white shadow-[0_0_12px_rgba(168,85,247,0.3)]'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>{t.viewUnified}</span>
-              </button>
-
-              <button
-                onClick={() => setViewMode('bars')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  viewMode === 'bars'
-                    ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.3)]'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <BarChart2 className="w-3.5 h-3.5" />
-                <span>{t.viewBars}</span>
-              </button>
-
-              <button
-                onClick={() => setViewMode('gauges')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  viewMode === 'gauges'
-                    ? 'bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.3)]'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Gauge className="w-3.5 h-3.5" />
-                <span>{t.viewGauges}</span>
-              </button>
-
-              <button
-                onClick={() => setViewMode('matrix')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  viewMode === 'matrix'
-                    ? 'bg-amber-600 text-white shadow-[0_0_12px_rgba(245,158,11,0.3)]'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Table className="w-3.5 h-3.5" />
-                <span>{t.viewMatrix}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Time Range Filter Selector */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t.timeRange}:</span>
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-black/25 border border-white/5 text-xs font-semibold">
-              {(['live', '15m', '1h', '24h', '7d'] as TimeRangeFilter[]).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setTimeRange(r)}
-                  className={`px-2.5 py-1 rounded-lg transition-all ${
-                    timeRange === r
-                      ? 'bg-white/20 text-white shadow-sm font-bold'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {r === 'live' ? t.timeLive : r === '15m' ? t.time15m : r === '1h' ? t.time1h : r === '24h' ? t.time24h : t.time7d}
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Top Quick KPI Strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className={`p-4 rounded-2xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
+        <div className={`p-4 rounded-2xl border transition-all ${
+          isLightMode ? 'bg-white border-slate-200 shadow-sm text-slate-800' : 'bg-black/25 border-white/5 text-white'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
-              <Cpu className="w-4 h-4 text-indigo-400" />
+            <span className={`text-xs font-bold flex items-center gap-1.5 ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>
+              <Cpu className="w-4 h-4 text-indigo-500" />
               {t.cpuUsage}
             </span>
-            <span className={`text-[11px] font-bold font-mono flex items-center ${statsSummary.cpu.delta >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+            <span className={`text-[11px] font-bold font-mono flex items-center ${statsSummary.cpu.delta >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
               {statsSummary.cpu.delta >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
               {Math.abs(statsSummary.cpu.delta)}%
             </span>
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-black font-display text-white">{statsSummary.cpu.current}%</span>
-            <span className="text-[11px] font-mono text-slate-400">Peak: {statsSummary.cpu.max}%</span>
+            <span className={`text-2xl font-black font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+              {statsSummary.cpu.current}%
+            </span>
+            <span className={`text-[11px] font-mono ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+              Peak: {statsSummary.cpu.max}%
+            </span>
           </div>
         </div>
 
-        <div className={`p-4 rounded-2xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
+        <div className={`p-4 rounded-2xl border transition-all ${
+          isLightMode ? 'bg-white border-slate-200 shadow-sm text-slate-800' : 'bg-black/25 border-white/5 text-white'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
-              <History className="w-4 h-4 text-purple-400" />
+            <span className={`text-xs font-bold flex items-center gap-1.5 ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>
+              <History className="w-4 h-4 text-purple-500" />
               {t.memoryUsage}
             </span>
-            <span className={`text-[11px] font-bold font-mono flex items-center ${statsSummary.mem.delta >= 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+            <span className={`text-[11px] font-bold font-mono flex items-center ${statsSummary.mem.delta >= 0 ? 'text-amber-500' : 'text-emerald-500'}`}>
               {statsSummary.mem.delta >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
               {Math.abs(statsSummary.mem.delta)}%
             </span>
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-black font-display text-white">{statsSummary.mem.current}%</span>
-            <span className="text-[11px] font-mono text-slate-400">{((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1)} GB / {stats?.memoryTotal || 8} GB</span>
+            <span className={`text-2xl font-black font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+              {statsSummary.mem.current}%
+            </span>
+            <span className={`text-[11px] font-mono ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+              {((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1)} GB / {stats?.memoryTotal || 8} GB
+            </span>
           </div>
         </div>
 
-        <div className={`p-4 rounded-2xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
+        <div className={`p-4 rounded-2xl border transition-all ${
+          isLightMode ? 'bg-white border-slate-200 shadow-sm text-slate-800' : 'bg-black/25 border-white/5 text-white'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
-              <Wifi className="w-4 h-4 text-cyan-400" />
+            <span className={`text-xs font-bold flex items-center gap-1.5 ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>
+              <Wifi className="w-4 h-4 text-cyan-500" />
               {t.networkTitle}
             </span>
-            <span className="text-[11px] font-bold font-mono text-cyan-400">
+            <span className="text-[11px] font-bold font-mono text-cyan-500">
               ↓ {statsSummary.netIn.current} KB/s
             </span>
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-black font-display text-white">↑ {statsSummary.netOut.current}</span>
-            <span className="text-[11px] font-mono text-slate-400">KB/s total</span>
+            <span className={`text-2xl font-black font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+              ↑ {statsSummary.netOut.current}
+            </span>
+            <span className={`text-[11px] font-mono ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+              KB/s total
+            </span>
           </div>
         </div>
 
-        <div className={`p-4 rounded-2xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
+        <div className={`p-4 rounded-2xl border transition-all ${
+          isLightMode ? 'bg-white border-slate-200 shadow-sm text-slate-800' : 'bg-black/25 border-white/5 text-white'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
-              <Users className="w-4 h-4 text-emerald-400" />
+            <span className={`text-xs font-bold flex items-center gap-1.5 ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>
+              <Users className="w-4 h-4 text-emerald-500" />
               {t.activeUsers}
             </span>
-            <span className="text-[11px] font-bold font-mono text-emerald-400">
+            <span className="text-[11px] font-bold font-mono text-emerald-500">
               {stats?.publicRoomsCount || 12} Rooms
             </span>
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-black font-display text-white">{statsSummary.users.current}</span>
-            <span className="text-[11px] font-mono text-slate-400">Live sessions</span>
+            <span className={`text-2xl font-black font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+              {statsSummary.users.current}
+            </span>
+            <span className={`text-[11px] font-mono ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+              Live sessions
+            </span>
           </div>
         </div>
       </div>
@@ -988,28 +1053,37 @@ export default function PanelAnalyticsView({
             <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
               <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
                 <div className="flex items-center gap-2">
-                  <Cpu className="w-5 h-5 text-indigo-400" />
-                  <h4 className="text-sm font-bold font-display text-white">{t.cpuUsage}</h4>
+                  <Cpu className="w-5 h-5 text-indigo-500" />
+                  <h4 className={`text-sm font-bold font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{t.cpuUsage}</h4>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10 text-[10px]">
+                  <div className={`flex items-center gap-1 p-1 rounded-xl border text-[10px] ${
+                    isLightMode ? 'bg-slate-100 border-slate-200' : 'bg-white/5 border-white/10'
+                  }`}>
                     {(['area', 'line', 'bar'] as ChartType[]).map((ct) => (
                       <button
                         key={ct}
+                        type="button"
                         onClick={() => setCpuChartType(ct)}
-                        className={`px-2 py-0.5 rounded-lg capitalize ${cpuChartType === ct ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400'}`}
+                        className={`px-2 py-0.5 rounded-lg capitalize cursor-pointer ${
+                          cpuChartType === ct 
+                            ? 'bg-indigo-600 text-white font-bold' 
+                            : (isLightMode ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white')
+                        }`}
                       >
                         {ct}
                       </button>
                     ))}
                   </div>
-                  <span className="text-xs font-bold font-mono text-indigo-400">{statsSummary.cpu.current}%</span>
+                  <span className="text-xs font-bold font-mono text-indigo-500">{statsSummary.cpu.current}%</span>
                 </div>
               </div>
               <div className="h-56 w-full font-mono text-[10px]" dir="ltr">
                 {renderChart(cpuChartType, 'cpu', '#6366f1', [0, 100], '%', 'CPU')}
               </div>
-              <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between text-xs font-mono text-slate-400">
+              <div className={`mt-3 pt-3 border-t flex items-center justify-between text-xs font-mono ${
+                isLightMode ? 'border-slate-100 text-slate-500' : 'border-white/5 text-slate-400'
+              }`}>
                 <span>{t.min}: {statsSummary.cpu.min}%</span>
                 <span>{t.avg}: {statsSummary.cpu.avg}%</span>
                 <span>{t.peak}: {statsSummary.cpu.max}%</span>
@@ -1020,30 +1094,39 @@ export default function PanelAnalyticsView({
             <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
               <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
                 <div className="flex items-center gap-2">
-                  <History className="w-5 h-5 text-purple-400" />
-                  <h4 className="text-sm font-bold font-display text-white">{t.memoryUsage}</h4>
+                  <History className="w-5 h-5 text-purple-500" />
+                  <h4 className={`text-sm font-bold font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{t.memoryUsage}</h4>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10 text-[10px]">
+                  <div className={`flex items-center gap-1 p-1 rounded-xl border text-[10px] ${
+                    isLightMode ? 'bg-slate-100 border-slate-200' : 'bg-white/5 border-white/10'
+                  }`}>
                     {(['area', 'line', 'bar'] as ChartType[]).map((ct) => (
                       <button
                         key={ct}
+                        type="button"
                         onClick={() => setMemChartType(ct)}
-                        className={`px-2 py-0.5 rounded-lg capitalize ${memChartType === ct ? 'bg-purple-600 text-white font-bold' : 'text-slate-400'}`}
+                        className={`px-2 py-0.5 rounded-lg capitalize cursor-pointer ${
+                          memChartType === ct 
+                            ? 'bg-purple-600 text-white font-bold' 
+                            : (isLightMode ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white')
+                        }`}
                       >
                         {ct}
                       </button>
                     ))}
                   </div>
-                  <span className="text-xs font-bold font-mono text-purple-400">{statsSummary.mem.current}%</span>
+                  <span className="text-xs font-bold font-mono text-purple-500">{statsSummary.mem.current}%</span>
                 </div>
               </div>
               <div className="h-56 w-full font-mono text-[10px]" dir="ltr">
                 {renderChart(memChartType, 'memory', '#a855f7', [0, 100], '%', 'Memory')}
               </div>
-              <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between text-xs font-mono text-slate-400">
+              <div className={`mt-3 pt-3 border-t flex items-center justify-between text-xs font-mono ${
+                isLightMode ? 'border-slate-100 text-slate-500' : 'border-white/5 text-slate-400'
+              }`}>
                 <span>{t.used}: {((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1)} GB</span>
-                <span>{t.free}: {(stats?.memoryTotal || 8) - parseFloat(((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1))} GB</span>
+                <span>{t.free}: {((stats?.memoryTotal || 8) - parseFloat(((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1))).toFixed(1)} GB</span>
                 <span>{t.total}: {stats?.memoryTotal || 8} GB</span>
               </div>
             </div>
@@ -1054,14 +1137,14 @@ export default function PanelAnalyticsView({
             <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
               <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
                 <div className="flex items-center gap-2">
-                  <Wifi className="w-5 h-5 text-cyan-400" />
-                  <h4 className="text-sm font-bold font-display text-white">{t.networkTitle}</h4>
+                  <Wifi className="w-5 h-5 text-cyan-500" />
+                  <h4 className={`text-sm font-bold font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{t.networkTitle}</h4>
                 </div>
                 <div className="flex items-center gap-2 text-xs font-mono">
-                  <span className="text-teal-400 flex items-center gap-1">
+                  <span className="text-teal-500 flex items-center gap-1">
                     <ArrowDownLeft className="w-3.5 h-3.5" /> ↓ {statsSummary.netIn.current} KB/s
                   </span>
-                  <span className="text-indigo-400 flex items-center gap-1">
+                  <span className="text-indigo-500 flex items-center gap-1">
                     <ArrowUpRight className="w-3.5 h-3.5" /> ↑ {statsSummary.netOut.current} KB/s
                   </span>
                 </div>
@@ -1072,16 +1155,18 @@ export default function PanelAnalyticsView({
                     <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
                     <XAxis dataKey="time" stroke="#64748b" />
                     <YAxis stroke="#64748b" />
-                    <Tooltip content={<CustomChartTooltip />} />
+                    <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
                     <Line type="monotone" name={t.download} dataKey="networkIn" stroke="#14b8a6" strokeWidth={2.5} dot={false} unit="KB/s" />
                     <Line type="monotone" name={t.upload} dataKey="networkOut" stroke="#6366f1" strokeWidth={2.5} dot={false} unit="KB/s" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-              <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between text-xs font-mono text-slate-400">
+              <div className={`mt-3 pt-3 border-t flex items-center justify-between text-xs font-mono ${
+                isLightMode ? 'border-slate-100 text-slate-500' : 'border-white/5 text-slate-400'
+              }`}>
                 <span>Peak In: {statsSummary.netIn.max} KB/s</span>
                 <span>Peak Out: {statsSummary.netOut.max} KB/s</span>
-                <span>Avg Total: {statsSummary.netIn.avg + statsSummary.netOut.avg} KB/s</span>
+                <span>Avg: {(statsSummary.netIn.avg + statsSummary.netOut.avg).toFixed(1)} KB/s</span>
               </div>
             </div>
 
@@ -1089,12 +1174,12 @@ export default function PanelAnalyticsView({
             <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
               <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
                 <div className="flex items-center gap-2">
-                  <Gauge className="w-5 h-5 text-amber-400" />
-                  <h4 className="text-sm font-bold font-display text-white">{t.diskIops}</h4>
+                  <Gauge className="w-5 h-5 text-amber-500" />
+                  <h4 className={`text-sm font-bold font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{t.diskIops}</h4>
                 </div>
                 <div className="flex items-center gap-2 text-xs font-mono">
-                  <span className="text-amber-400 font-bold">{statsSummary.iops.current} op/s</span>
-                  <span className="text-rose-400 font-bold">{statsSummary.latency.current} ms</span>
+                  <span className="text-amber-500 font-bold">{statsSummary.iops.current} op/s</span>
+                  <span className="text-rose-500 font-bold">{statsSummary.latency.current} ms</span>
                 </div>
               </div>
               <div className="h-56 w-full font-mono text-[10px]" dir="ltr">
@@ -1110,13 +1195,15 @@ export default function PanelAnalyticsView({
                     <XAxis dataKey="time" stroke="#64748b" />
                     <YAxis yAxisId="left" stroke="#f59e0b" />
                     <YAxis yAxisId="right" orientation="right" stroke="#f43f5e" domain={[0, 10]} />
-                    <Tooltip content={<CustomChartTooltip />} />
+                    <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
                     <Area yAxisId="left" type="monotone" name={t.iops} dataKey="diskIops" stroke="#f59e0b" fill="url(#grad_iops)" strokeWidth={2} unit="op/s" />
                     <Line yAxisId="right" type="monotone" name={t.latency} dataKey="diskLatencyMs" stroke="#f43f5e" strokeWidth={2} dot={false} unit="ms" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
-              <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between text-xs font-mono text-slate-400">
+              <div className={`mt-3 pt-3 border-t flex items-center justify-between text-xs font-mono ${
+                isLightMode ? 'border-slate-100 text-slate-500' : 'border-white/5 text-slate-400'
+              }`}>
                 <span>Max IOPS: {statsSummary.iops.max} op/s</span>
                 <span>Avg IOPS: {statsSummary.iops.avg} op/s</span>
                 <span>Max Latency: {statsSummary.latency.max} ms</span>
@@ -1128,22 +1215,29 @@ export default function PanelAnalyticsView({
           <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
             <div className={`flex items-center justify-between mb-4 ${isRtl ? 'flex-row-reverse' : ''}`}>
               <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-emerald-400" />
-                <h4 className="text-sm font-bold font-display text-white">{t.activeUsers}</h4>
+                <Users className="w-5 h-5 text-emerald-500" />
+                <h4 className={`text-sm font-bold font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{t.activeUsers}</h4>
               </div>
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10 text-[10px]">
+                <div className={`flex items-center gap-1 p-1 rounded-xl border text-[10px] ${
+                  isLightMode ? 'bg-slate-100 border-slate-200' : 'bg-white/5 border-white/10'
+                }`}>
                   {(['area', 'line', 'bar'] as ChartType[]).map((ct) => (
                     <button
                       key={ct}
+                      type="button"
                       onClick={() => setUsersChartType(ct)}
-                      className={`px-2 py-0.5 rounded-lg capitalize ${usersChartType === ct ? 'bg-emerald-600 text-white font-bold' : 'text-slate-400'}`}
+                      className={`px-2 py-0.5 rounded-lg capitalize cursor-pointer ${
+                        usersChartType === ct 
+                          ? 'bg-emerald-600 text-white font-bold' 
+                          : (isLightMode ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white')
+                      }`}
                     >
                       {ct}
                     </button>
                   ))}
                 </div>
-                <span className="text-xs font-bold font-mono text-emerald-400">{statsSummary.users.current} {t.current}</span>
+                <span className="text-xs font-bold font-mono text-emerald-500">{statsSummary.users.current} {t.current}</span>
               </div>
             </div>
             <div className="h-56 w-full font-mono text-[10px]" dir="ltr">
@@ -1158,59 +1252,79 @@ export default function PanelAnalyticsView({
       {/* ========================================================================= */}
       {viewMode === 'unified' && (
         <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'} space-y-6`}>
-          <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/10 ${isRtl ? 'text-right' : 'text-left'}`}>
+          <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b ${
+            isLightMode ? 'border-slate-200' : 'border-white/10'
+          } ${isRtl ? 'text-right' : 'text-left'}`}>
             <div>
-              <h3 className="text-lg font-bold font-display text-white">{t.viewUnified}</h3>
-              <p className="text-xs text-slate-400">{t.metricsSummary}</p>
+              <h3 className={`text-lg font-bold font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{t.viewUnified}</h3>
+              <p className={`text-xs ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.metricsSummary}</p>
             </div>
 
             {/* Interactive Layer Toggles */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-400">{t.layerToggles}</span>
+            <div className={`flex flex-wrap items-center gap-2 ${isRtl ? 'flex-row-reverse' : ''}`}>
+              <span className={`text-xs font-semibold ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>{t.layerToggles}</span>
               <button
+                type="button"
                 onClick={() => setVisibleSeries(p => ({ ...p, cpu: !p.cpu }))}
-                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all ${
-                  visibleSeries.cpu ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 shadow-sm' : 'bg-black/20 text-slate-500 border-white/5 opacity-50'
+                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  visibleSeries.cpu 
+                    ? (isLightMode ? 'bg-indigo-100 text-indigo-800 border-indigo-300 shadow-sm' : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 shadow-sm')
+                    : (isLightMode ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' : 'bg-black/20 text-slate-500 border-white/5 opacity-50')
                 }`}
               >
                 CPU (%)
               </button>
               <button
+                type="button"
                 onClick={() => setVisibleSeries(p => ({ ...p, memory: !p.memory }))}
-                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all ${
-                  visibleSeries.memory ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 shadow-sm' : 'bg-black/20 text-slate-500 border-white/5 opacity-50'
+                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  visibleSeries.memory 
+                    ? (isLightMode ? 'bg-purple-100 text-purple-800 border-purple-300 shadow-sm' : 'bg-purple-500/20 text-purple-300 border-purple-500/40 shadow-sm')
+                    : (isLightMode ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' : 'bg-black/20 text-slate-500 border-white/5 opacity-50')
                 }`}
               >
                 RAM (%)
               </button>
               <button
+                type="button"
                 onClick={() => setVisibleSeries(p => ({ ...p, activeUsers: !p.activeUsers }))}
-                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all ${
-                  visibleSeries.activeUsers ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm' : 'bg-black/20 text-slate-500 border-white/5 opacity-50'
+                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  visibleSeries.activeUsers 
+                    ? (isLightMode ? 'bg-emerald-100 text-emerald-800 border-emerald-300 shadow-sm' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm')
+                    : (isLightMode ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' : 'bg-black/20 text-slate-500 border-white/5 opacity-50')
                 }`}
               >
                 Users
               </button>
               <button
+                type="button"
                 onClick={() => setVisibleSeries(p => ({ ...p, networkIn: !p.networkIn }))}
-                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all ${
-                  visibleSeries.networkIn ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm' : 'bg-black/20 text-slate-500 border-white/5 opacity-50'
+                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  visibleSeries.networkIn 
+                    ? (isLightMode ? 'bg-cyan-100 text-cyan-800 border-cyan-300 shadow-sm' : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm')
+                    : (isLightMode ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' : 'bg-black/20 text-slate-500 border-white/5 opacity-50')
                 }`}
               >
                 Net In
               </button>
               <button
+                type="button"
                 onClick={() => setVisibleSeries(p => ({ ...p, networkOut: !p.networkOut }))}
-                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all ${
-                  visibleSeries.networkOut ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm' : 'bg-black/20 text-slate-500 border-white/5 opacity-50'
+                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  visibleSeries.networkOut 
+                    ? (isLightMode ? 'bg-blue-100 text-blue-800 border-blue-300 shadow-sm' : 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm')
+                    : (isLightMode ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' : 'bg-black/20 text-slate-500 border-white/5 opacity-50')
                 }`}
               >
                 Net Out
               </button>
               <button
+                type="button"
                 onClick={() => setVisibleSeries(p => ({ ...p, diskIops: !p.diskIops }))}
-                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all ${
-                  visibleSeries.diskIops ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm' : 'bg-black/20 text-slate-500 border-white/5 opacity-50'
+                className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  visibleSeries.diskIops 
+                    ? (isLightMode ? 'bg-amber-100 text-amber-800 border-amber-300 shadow-sm' : 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm')
+                    : (isLightMode ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-60' : 'bg-black/20 text-slate-500 border-white/5 opacity-50')
                 }`}
               >
                 IOPS
@@ -1226,7 +1340,7 @@ export default function PanelAnalyticsView({
                 <XAxis dataKey="time" stroke="#64748b" />
                 <YAxis yAxisId="pct" domain={[0, 100]} stroke="#818cf8" />
                 <YAxis yAxisId="raw" orientation="right" stroke="#38bdf8" />
-                <Tooltip content={<CustomChartTooltip />} />
+                <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
                 <Legend />
                 {visibleSeries.cpu && (
                   <Line yAxisId="pct" type="monotone" name="CPU Usage (%)" dataKey="cpu" stroke="#6366f1" strokeWidth={2.5} dot={false} activeDot={{ r: 6 }} unit="%" />
@@ -1258,7 +1372,7 @@ export default function PanelAnalyticsView({
       {viewMode === 'bars' && (
         <div className="space-y-6">
           <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-            <h3 className={`text-base font-bold font-display text-white mb-4 ${isRtl ? 'text-right' : 'text-left'}`}>
+            <h3 className={`text-base font-bold font-display mb-4 ${isLightMode ? 'text-slate-900' : 'text-white'} ${isRtl ? 'text-right' : 'text-left'}`}>
               {t.viewBars} — CPU, RAM & Disk Load
             </h3>
             <div className="h-72 w-full font-mono text-[10px]" dir="ltr">
@@ -1267,7 +1381,7 @@ export default function PanelAnalyticsView({
                   <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
                   <XAxis dataKey="time" stroke="#64748b" />
                   <YAxis domain={[0, 100]} stroke="#64748b" />
-                  <Tooltip content={<CustomChartTooltip />} />
+                  <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
                   <Legend />
                   <Bar dataKey="cpu" fill="#6366f1" name="CPU (%)" radius={[4, 4, 0, 0]} unit="%" />
                   <Bar dataKey="memory" fill="#a855f7" name="RAM (%)" radius={[4, 4, 0, 0]} unit="%" />
@@ -1279,7 +1393,7 @@ export default function PanelAnalyticsView({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-              <h4 className={`text-sm font-bold font-display text-white mb-3 ${isRtl ? 'text-right' : 'text-left'}`}>
+              <h4 className={`text-sm font-bold font-display mb-3 ${isLightMode ? 'text-slate-900' : 'text-white'} ${isRtl ? 'text-right' : 'text-left'}`}>
                 {t.networkTitle} (Download vs Upload Distribution)
               </h4>
               <div className="h-60 w-full font-mono text-[10px]" dir="ltr">
@@ -1288,7 +1402,7 @@ export default function PanelAnalyticsView({
                     <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
                     <XAxis dataKey="time" stroke="#64748b" />
                     <YAxis stroke="#64748b" />
-                    <Tooltip content={<CustomChartTooltip />} />
+                    <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
                     <Legend />
                     <Bar dataKey="networkIn" fill="#14b8a6" name={t.download} radius={[4, 4, 0, 0]} unit="KB/s" />
                     <Bar dataKey="networkOut" fill="#6366f1" name={t.upload} radius={[4, 4, 0, 0]} unit="KB/s" />
@@ -1298,7 +1412,7 @@ export default function PanelAnalyticsView({
             </div>
 
             <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-              <h4 className={`text-sm font-bold font-display text-white mb-3 ${isRtl ? 'text-right' : 'text-left'}`}>
+              <h4 className={`text-sm font-bold font-display mb-3 ${isLightMode ? 'text-slate-900' : 'text-white'} ${isRtl ? 'text-right' : 'text-left'}`}>
                 {t.diskIops} Distribution
               </h4>
               <div className="h-60 w-full font-mono text-[10px]" dir="ltr">
@@ -1307,7 +1421,7 @@ export default function PanelAnalyticsView({
                     <CartesianGrid strokeDasharray="3 3" stroke={isLightMode ? '#e2e8f0' : 'rgba(255,255,255,0.05)'} />
                     <XAxis dataKey="time" stroke="#64748b" />
                     <YAxis stroke="#64748b" />
-                    <Tooltip content={<CustomChartTooltip />} />
+                    <Tooltip content={<CustomChartTooltip isLightMode={isLightMode} />} />
                     <Bar dataKey="diskIops" fill="#f59e0b" name={t.iops} radius={[4, 4, 0, 0]} unit="op/s" />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1327,19 +1441,27 @@ export default function PanelAnalyticsView({
             <div className={`p-6 rounded-3xl border text-center relative overflow-hidden transition-all ${
               isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'
             }`}>
-              <div className="flex items-center justify-center gap-2 mb-3 text-xs font-bold text-slate-400 uppercase">
-                <Cpu className="w-4 h-4 text-indigo-400" />
+              <div className={`flex items-center justify-center gap-2 mb-3 text-xs font-bold uppercase ${
+                isLightMode ? 'text-slate-600' : 'text-slate-400'
+              }`}>
+                <Cpu className="w-4 h-4 text-indigo-500" />
                 {t.cpuUsage}
               </div>
               <div className="relative inline-flex items-center justify-center my-2">
-                <div className="w-32 h-32 rounded-full border-8 border-indigo-500/20 flex items-center justify-center">
+                <div className={`w-32 h-32 rounded-full border-8 flex items-center justify-center ${
+                  isLightMode ? 'border-indigo-100 bg-indigo-50/50' : 'border-indigo-500/20 bg-indigo-500/5'
+                }`}>
                   <div className="text-center">
-                    <span className="text-3xl font-black font-display text-white">{statsSummary.cpu.current}%</span>
-                    <p className="text-[10px] font-mono text-slate-400">Peak: {statsSummary.cpu.max}%</p>
+                    <span className={`text-3xl font-black font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+                      {statsSummary.cpu.current}%
+                    </span>
+                    <p className={`text-[10px] font-mono ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>Peak: {statsSummary.cpu.max}%</p>
                   </div>
                 </div>
               </div>
-              <div className="mt-3 flex justify-between text-xs font-mono text-slate-400 border-t border-white/5 pt-2">
+              <div className={`mt-3 flex justify-between text-xs font-mono border-t pt-2 ${
+                isLightMode ? 'border-slate-100 text-slate-500' : 'border-white/5 text-slate-400'
+              }`}>
                 <span>Min: {statsSummary.cpu.min}%</span>
                 <span>Avg: {statsSummary.cpu.avg}%</span>
               </div>
@@ -1349,20 +1471,28 @@ export default function PanelAnalyticsView({
             <div className={`p-6 rounded-3xl border text-center relative overflow-hidden transition-all ${
               isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'
             }`}>
-              <div className="flex items-center justify-center gap-2 mb-3 text-xs font-bold text-slate-400 uppercase">
-                <History className="w-4 h-4 text-purple-400" />
+              <div className={`flex items-center justify-center gap-2 mb-3 text-xs font-bold uppercase ${
+                isLightMode ? 'text-slate-600' : 'text-slate-400'
+              }`}>
+                <History className="w-4 h-4 text-purple-500" />
                 {t.memoryUsage}
               </div>
               <div className="relative inline-flex items-center justify-center my-2">
-                <div className="w-32 h-32 rounded-full border-8 border-purple-500/20 flex items-center justify-center">
+                <div className={`w-32 h-32 rounded-full border-8 flex items-center justify-center ${
+                  isLightMode ? 'border-purple-100 bg-purple-50/50' : 'border-purple-500/20 bg-purple-500/5'
+                }`}>
                   <div className="text-center">
-                    <span className="text-3xl font-black font-display text-white">{statsSummary.mem.current}%</span>
-                    <p className="text-[10px] font-mono text-slate-400">{((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1)} GB</p>
+                    <span className={`text-3xl font-black font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+                      {statsSummary.mem.current}%
+                    </span>
+                    <p className={`text-[10px] font-mono ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1)} GB</p>
                   </div>
                 </div>
               </div>
-              <div className="mt-3 flex justify-between text-xs font-mono text-slate-400 border-t border-white/5 pt-2">
-                <span>Free: {(stats?.memoryTotal || 8) - parseFloat(((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1))} GB</span>
+              <div className={`mt-3 flex justify-between text-xs font-mono border-t pt-2 ${
+                isLightMode ? 'border-slate-100 text-slate-500' : 'border-white/5 text-slate-400'
+              }`}>
+                <span>Free: {((stats?.memoryTotal || 8) - parseFloat(((stats?.memoryTotal || 8) * (statsSummary.mem.current / 100)).toFixed(1))).toFixed(1)} GB</span>
                 <span>Total: {stats?.memoryTotal || 8} GB</span>
               </div>
             </div>
@@ -1371,19 +1501,27 @@ export default function PanelAnalyticsView({
             <div className={`p-6 rounded-3xl border text-center relative overflow-hidden transition-all ${
               isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'
             }`}>
-              <div className="flex items-center justify-center gap-2 mb-3 text-xs font-bold text-slate-400 uppercase">
-                <HardDrive className="w-4 h-4 text-cyan-400" />
+              <div className={`flex items-center justify-center gap-2 mb-3 text-xs font-bold uppercase ${
+                isLightMode ? 'text-slate-600' : 'text-slate-400'
+              }`}>
+                <HardDrive className="w-4 h-4 text-cyan-500" />
                 {t.diskStorage}
               </div>
               <div className="relative inline-flex items-center justify-center my-2">
-                <div className="w-32 h-32 rounded-full border-8 border-cyan-500/20 flex items-center justify-center">
+                <div className={`w-32 h-32 rounded-full border-8 flex items-center justify-center ${
+                  isLightMode ? 'border-cyan-100 bg-cyan-50/50' : 'border-cyan-500/20 bg-cyan-500/5'
+                }`}>
                   <div className="text-center">
-                    <span className="text-3xl font-black font-display text-white">{stats?.diskUsage || 32}%</span>
-                    <p className="text-[10px] font-mono text-slate-400">{stats?.diskFree || 65} GB Free</p>
+                    <span className={`text-3xl font-black font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+                      {stats?.diskUsage || 32}%
+                    </span>
+                    <p className={`text-[10px] font-mono ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{stats?.diskFree || 65} GB Free</p>
                   </div>
                 </div>
               </div>
-              <div className="mt-3 flex justify-between text-xs font-mono text-slate-400 border-t border-white/5 pt-2">
+              <div className={`mt-3 flex justify-between text-xs font-mono border-t pt-2 ${
+                isLightMode ? 'border-slate-100 text-slate-500' : 'border-white/5 text-slate-400'
+              }`}>
                 <span>Used: {stats?.diskTotal ? (stats.diskTotal - (stats.diskFree || 0)).toFixed(1) : '32.0'} GB</span>
                 <span>Total: {stats?.diskTotal || 97.7} GB</span>
               </div>
@@ -1393,19 +1531,27 @@ export default function PanelAnalyticsView({
             <div className={`p-6 rounded-3xl border text-center relative overflow-hidden transition-all ${
               isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'
             }`}>
-              <div className="flex items-center justify-center gap-2 mb-3 text-xs font-bold text-slate-400 uppercase">
-                <Wifi className="w-4 h-4 text-emerald-400" />
+              <div className={`flex items-center justify-center gap-2 mb-3 text-xs font-bold uppercase ${
+                isLightMode ? 'text-slate-600' : 'text-slate-400'
+              }`}>
+                <Wifi className="w-4 h-4 text-emerald-500" />
                 {t.networkTitle}
               </div>
               <div className="relative inline-flex items-center justify-center my-2">
-                <div className="w-32 h-32 rounded-full border-8 border-emerald-500/20 flex items-center justify-center">
+                <div className={`w-32 h-32 rounded-full border-8 flex items-center justify-center ${
+                  isLightMode ? 'border-emerald-100 bg-emerald-50/50' : 'border-emerald-500/20 bg-emerald-500/5'
+                }`}>
                   <div className="text-center">
-                    <span className="text-2xl font-black font-display text-white">{(statsSummary.netIn.current + statsSummary.netOut.current)}</span>
-                    <p className="text-[10px] font-mono text-emerald-400">KB/s total</p>
+                    <span className={`text-2xl font-black font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+                      {(statsSummary.netIn.current + statsSummary.netOut.current)}
+                    </span>
+                    <p className="text-[10px] font-mono text-emerald-500">KB/s total</p>
                   </div>
                 </div>
               </div>
-              <div className="mt-3 flex justify-between text-xs font-mono text-slate-400 border-t border-white/5 pt-2">
+              <div className={`mt-3 flex justify-between text-xs font-mono border-t pt-2 ${
+                isLightMode ? 'border-slate-100 text-slate-500' : 'border-white/5 text-slate-400'
+              }`}>
                 <span>↓ {statsSummary.netIn.current} KB/s</span>
                 <span>↑ {statsSummary.netOut.current} KB/s</span>
               </div>
@@ -1419,29 +1565,45 @@ export default function PanelAnalyticsView({
       {/* ========================================================================= */}
       {viewMode === 'matrix' && (
         <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'} space-y-4`}>
-          <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/10 ${isRtl ? 'text-right' : 'text-left'}`}>
+          <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b ${
+            isLightMode ? 'border-slate-200' : 'border-white/10'
+          } ${isRtl ? 'text-right' : 'text-left'}`}>
             <div>
-              <h3 className="text-base font-bold font-display text-white">{t.viewMatrix}</h3>
-              <p className="text-xs text-slate-400">{t.recordsCount}: {displayTrends.length}</p>
+              <h3 className={`text-base font-bold font-display ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{t.viewMatrix}</h3>
+              <p className={`text-xs ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.recordsCount}: {displayTrends.length}</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5">
               <input
                 type="text"
                 placeholder={t.filterTable}
                 value={tableFilter}
                 onChange={(e) => setTableFilter(e.target.value)}
-                className="px-3.5 py-1.5 rounded-xl text-xs bg-black/30 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                className={`px-3.5 py-1.5 rounded-xl text-xs border focus:outline-none focus:border-indigo-500 ${
+                  isLightMode 
+                    ? 'bg-slate-100 border-slate-300 text-slate-900 placeholder-slate-400 focus:bg-white' 
+                    : 'bg-black/30 border-white/10 text-white placeholder-slate-500'
+                }`}
               />
               <button
+                type="button"
                 onClick={handleExportCSV}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/30 transition-all"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  isLightMode 
+                    ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200 shadow-sm' 
+                    : 'bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border-indigo-500/30'
+                }`}
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" />
                 <span>{t.exportCsv}</span>
               </button>
               <button
+                type="button"
                 onClick={handleExportJSON}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30 transition-all"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  isLightMode 
+                    ? 'bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200 shadow-sm' 
+                    : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border-purple-500/30'
+                }`}
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>{t.exportJson}</span>
@@ -1449,33 +1611,39 @@ export default function PanelAnalyticsView({
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-2xl border border-white/5 max-h-[480px]">
+          <div className={`overflow-x-auto rounded-2xl border max-h-[480px] ${
+            isLightMode ? 'border-slate-200' : 'border-white/5'
+          }`}>
             <table className="w-full text-xs font-mono text-left dir-ltr">
-              <thead className="sticky top-0 bg-slate-900/90 backdrop-blur-md text-slate-300 border-b border-white/10">
+              <thead className={`sticky top-0 backdrop-blur-md border-b ${
+                isLightMode ? 'bg-slate-100/95 text-slate-700 border-slate-200' : 'bg-slate-900/90 text-slate-300 border-white/10'
+              }`}>
                 <tr>
                   <th className="p-3 font-bold">{t.timestamp}</th>
-                  <th className="p-3 font-bold text-indigo-400">CPU (%)</th>
-                  <th className="p-3 font-bold text-purple-400">RAM (%)</th>
-                  <th className="p-3 font-bold text-emerald-400">Users</th>
-                  <th className="p-3 font-bold text-cyan-400">Net In (KB/s)</th>
-                  <th className="p-3 font-bold text-blue-400">Net Out (KB/s)</th>
-                  <th className="p-3 font-bold text-amber-400">Disk IOPS</th>
-                  <th className="p-3 font-bold text-rose-400">Latency (ms)</th>
+                  <th className="p-3 font-bold text-indigo-500">CPU (%)</th>
+                  <th className="p-3 font-bold text-purple-500">RAM (%)</th>
+                  <th className="p-3 font-bold text-emerald-500">Users</th>
+                  <th className="p-3 font-bold text-cyan-500">Net In (KB/s)</th>
+                  <th className="p-3 font-bold text-blue-500">Net Out (KB/s)</th>
+                  <th className="p-3 font-bold text-amber-500">Disk IOPS</th>
+                  <th className="p-3 font-bold text-rose-500">Latency (ms)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
+              <tbody className={`divide-y ${isLightMode ? 'divide-slate-200' : 'divide-white/5'}`}>
                 {displayTrends
                   .filter(d => !tableFilter || d.time.includes(tableFilter))
                   .map((row, idx) => (
-                    <tr key={idx} className="hover:bg-white/[0.02] transition-colors">
-                      <td className="p-3 text-slate-400 font-semibold">{row.time}</td>
-                      <td className="p-3 text-indigo-300 font-bold">{row.cpu}%</td>
-                      <td className="p-3 text-purple-300 font-bold">{row.memory}%</td>
-                      <td className="p-3 text-emerald-300 font-bold">{row.activeUsers}</td>
-                      <td className="p-3 text-cyan-300">{row.networkIn || 0}</td>
-                      <td className="p-3 text-blue-300">{row.networkOut || 0}</td>
-                      <td className="p-3 text-amber-300">{row.diskIops || 0}</td>
-                      <td className="p-3 text-rose-300">{row.diskLatencyMs || 0}</td>
+                    <tr key={idx} className={`transition-colors ${
+                      isLightMode ? 'hover:bg-slate-50 text-slate-800' : 'hover:bg-white/[0.02] text-slate-200'
+                    }`}>
+                      <td className={`p-3 font-semibold ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>{row.time}</td>
+                      <td className="p-3 text-indigo-500 font-bold">{row.cpu}%</td>
+                      <td className="p-3 text-purple-500 font-bold">{row.memory}%</td>
+                      <td className="p-3 text-emerald-500 font-bold">{row.activeUsers}</td>
+                      <td className="p-3 text-cyan-500">{row.networkIn || 0}</td>
+                      <td className="p-3 text-blue-500">{row.networkOut || 0}</td>
+                      <td className="p-3 text-amber-500">{row.diskIops || 0}</td>
+                      <td className="p-3 text-rose-500">{row.diskLatencyMs || 0}</td>
                     </tr>
                   ))}
               </tbody>
@@ -1484,32 +1652,44 @@ export default function PanelAnalyticsView({
         </div>
       )}
 
-      {/* System Infrastructure Summary Cards */}
-      <div className={`p-6 rounded-3xl border transition-all ${isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'}`}>
-        <h4 className={`text-sm font-bold font-display text-white mb-4 flex items-center gap-2 ${isRtl ? 'flex-row-reverse text-right' : 'text-left'}`}>
-          <Server className="w-4 h-4 text-indigo-400" />
+      {/* SECTION 3: System Infrastructure Summary Cards */}
+      <div className={`p-6 rounded-3xl border transition-all ${
+        isLightMode ? 'bg-white border-slate-200 shadow-sm' : 'bg-black/25 border-white/5'
+      }`}>
+        <h4 className={`text-sm font-bold font-display mb-4 flex items-center gap-2 ${
+          isLightMode ? 'text-slate-900' : 'text-white'
+        } ${isRtl ? 'flex-row-reverse text-right' : 'text-left'}`}>
+          <Server className="w-4 h-4 text-indigo-500" />
           {t.metricsSummary} & {t.servicesOnline}
         </h4>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
-          <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/5">
-            <span className="text-slate-400 block mb-1">{t.synapseStatus}</span>
-            <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+          <div className={`p-3.5 rounded-2xl border transition-all ${
+            isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-white/[0.03] border-white/5'
+          }`}>
+            <span className={`block mb-1 font-semibold ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.synapseStatus}</span>
+            <span className="font-bold text-emerald-500 flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5" /> Synapse v{stats?.synapseVersion || '1.98.0'}
             </span>
           </div>
-          <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/5">
-            <span className="text-slate-400 block mb-1">{t.databaseStatus}</span>
-            <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+          <div className={`p-3.5 rounded-2xl border transition-all ${
+            isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-white/[0.03] border-white/5'
+          }`}>
+            <span className={`block mb-1 font-semibold ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.databaseStatus}</span>
+            <span className="font-bold text-emerald-500 flex items-center gap-1.5">
               <Database className="w-3.5 h-3.5" /> PostgreSQL Connected
             </span>
           </div>
-          <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/5">
-            <span className="text-slate-400 block mb-1">{t.systemUptime}</span>
-            <span className="font-bold text-white font-mono">{stats?.uptime || '4 days, 18 hours'}</span>
+          <div className={`p-3.5 rounded-2xl border transition-all ${
+            isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-white/[0.03] border-white/5'
+          }`}>
+            <span className={`block mb-1 font-semibold ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.systemUptime}</span>
+            <span className={`font-bold font-mono ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{stats?.uptime || '4 days, 18 hours'}</span>
           </div>
-          <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/5">
-            <span className="text-slate-400 block mb-1">Server Clock / Date</span>
-            <span className="font-bold text-white font-mono">{stats?.serverDate || '2026-08-27'} {stats?.serverTime || ''}</span>
+          <div className={`p-3.5 rounded-2xl border transition-all ${
+            isLightMode ? 'bg-slate-50 border-slate-200' : 'bg-white/[0.03] border-white/5'
+          }`}>
+            <span className={`block mb-1 font-semibold ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>Server Clock / Date</span>
+            <span className={`font-bold font-mono ${isLightMode ? 'text-slate-900' : 'text-white'}`}>{stats?.serverDate || '2026-08-27'} {stats?.serverTime || ''}</span>
           </div>
         </div>
       </div>
