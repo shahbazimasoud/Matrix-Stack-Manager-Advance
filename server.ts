@@ -25675,7 +25675,7 @@ app.delete("/api/matrix/wallpaper/delete", authenticateToken, checkPermission(["
  */
 async function getSystemDateTimeInfo(targetConnInput?: any) {
   const activeConn = targetConnInput || getActiveConnection();
-  const isRemote = activeConn && activeConn.id !== "local";
+  const isRemote = Boolean(activeConn && activeConn.id !== "local");
   const serverName = activeConn ? (activeConn.name || activeConn.host || (isRemote ? "Remote Server" : "Local Host")) : "Local Host";
 
   const defaultDT = getServerDateTime();
@@ -25689,75 +25689,92 @@ async function getSystemDateTimeInfo(targetConnInput?: any) {
   let formatted = "";
 
   try {
-    const rawOut = await runServerCommand(
-      'python3 -c "import datetime, time; now = datetime.datetime.now(); utcnow = datetime.datetime.utcnow(); diff = now - utcnow; total_sec = int(diff.total_seconds()); h = abs(total_sec) // 3600; m = (abs(total_sec) % 3600) // 60; sign = \'+\' if total_sec >= 0 else \'-\'; offset = f\'{sign}{h:02d}:{m:02d}\'; print(f\'DATE={now.strftime(\"%Y-%m-%d\")}\\nTIME={now.strftime(\"%H:%M:%S\")}\\nTIMESTAMP={int(time.time()*1000)}\\nOFFSET={offset}\')" 2>/dev/null || date +"DATE=%Y-%m-%d\nTIME=%H:%M:%S\nOFFSET=%z\nTIMESTAMP=%s000"',
-      activeConn
-    );
+    const combinedCmd = `bash -c '
+echo "===DATETIME==="
+date +"%Y-%m-%d|%H:%M:%S|%Z|%z|%s" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S" 2>/dev/null || true
+echo "===TIMEDATECTL==="
+timedatectl show --no-pager 2>/dev/null || timedatectl status 2>/dev/null || true
+echo "===TIMEZONE==="
+cat /etc/timezone 2>/dev/null || readlink /etc/localtime 2>/dev/null || true
+'`;
+    const rawOut = await runServerCommand(combinedCmd, activeConn);
 
-    if (rawOut && rawOut.includes("=")) {
-      const lines = rawOut.split(/\r?\n/);
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("DATE=")) {
-          date = trimmed.split("=")[1].trim();
-        } else if (trimmed.startsWith("TIME=")) {
-          time = trimmed.split("=")[1].trim();
-        } else if (trimmed.startsWith("TIMESTAMP=")) {
-          const ts = parseInt(trimmed.split("=")[1].trim(), 10);
-          if (!isNaN(ts) && ts > 0) {
-            timestamp = ts < 10000000000 ? ts * 1000 : ts;
+    if (rawOut) {
+      const dtMatch = rawOut.match(/===DATETIME===([\s\S]*?)===TIMEDATECTL===/);
+      if (dtMatch) {
+        const line = dtMatch[1].trim();
+        if (line.includes("|")) {
+          const parts = line.split("|");
+          if (parts.length >= 2 && parts[0].includes("-") && parts[1].includes(":")) {
+            date = parts[0].trim();
+            time = parts[1].trim();
+            if (parts[2] && parts[2].trim()) timezone = parts[2].trim();
+            if (parts[3] && parts[3].trim()) {
+              let off = parts[3].trim();
+              if (off.length === 5 && (off.startsWith("+") || off.startsWith("-")) && !off.includes(":")) {
+                off = off.slice(0, 3) + ":" + off.slice(3);
+              }
+              if (off) utcOffset = off;
+            }
+            const ts = parseInt(parts[4] ? parts[4].trim() : "", 10);
+            if (!isNaN(ts) && ts > 0) {
+              timestamp = ts < 10000000000 ? ts * 1000 : ts;
+            }
           }
-        } else if (trimmed.startsWith("OFFSET=")) {
-          let off = trimmed.split("=")[1].trim();
-          if (off.length === 5 && (off.startsWith("+") || off.startsWith("-")) && !off.includes(":")) {
-            off = off.slice(0, 3) + ":" + off.slice(3);
+        } else {
+          const m = line.match(/(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/);
+          if (m) {
+            date = m[1];
+            time = m[2];
           }
-          if (off) utcOffset = off;
+        }
+      }
+
+      const tdcMatch = rawOut.match(/===TIMEDATECTL===([\s\S]*?)===TIMEZONE===/);
+      if (tdcMatch) {
+        const tzOut = tdcMatch[1].trim();
+        if (tzOut.includes("Timezone=")) {
+          const m = tzOut.match(/Timezone=([^\r\n]+)/);
+          if (m && m[1]) timezone = m[1].trim();
+        } else if (tzOut.includes("Time zone:")) {
+          const m = tzOut.match(/Time zone:\s*([^\s(]+)/);
+          if (m && m[1]) timezone = m[1].trim();
+        }
+
+        if (tzOut.includes("NTP=")) {
+          const m = tzOut.match(/NTP=([^\r\n]+)/);
+          if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "yes";
+        } else if (tzOut.includes("NTP enabled:")) {
+          const m = tzOut.match(/NTP enabled:\s*([^\r\n]+)/);
+          if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "yes";
+        } else if (tzOut.includes("NTP service:")) {
+          const m = tzOut.match(/NTP service:\s*([^\r\n]+)/);
+          if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "active";
+        }
+
+        if (tzOut.includes("NTPSynchronized=")) {
+          const m = tzOut.match(/NTPSynchronized=([^\r\n]+)/);
+          if (m && m[1]) ntpSynchronized = m[1].trim().toLowerCase() === "yes";
+        } else if (tzOut.includes("System clock synchronized:")) {
+          const m = tzOut.match(/System clock synchronized:\s*([^\r\n]+)/);
+          if (m && m[1]) ntpSynchronized = m[1].trim().toLowerCase() === "yes";
+        }
+      }
+
+      const tzMatch = rawOut.match(/===TIMEZONE===([\s\S]*)$/);
+      if (tzMatch) {
+        const tzFallback = tzMatch[1].trim();
+        if (tzFallback && (!timezone || timezone === "UTC" || timezone === "Etc/UTC")) {
+          if (tzFallback.includes("zoneinfo/")) {
+            timezone = tzFallback.split("zoneinfo/")[1].trim();
+          } else if (!tzFallback.includes(" ") && tzFallback.includes("/")) {
+            timezone = tzFallback;
+          }
         }
       }
     }
   } catch (err: any) {
     console.log("Notice reading system date/time:", err.message);
-  }
-
-  // Get timezone and NTP status
-  try {
-    const tzOut = await runServerCommand(
-      "timedatectl show --no-pager 2>/dev/null || timedatectl status 2>/dev/null || cat /etc/timezone 2>/dev/null",
-      activeConn
-    );
-    if (tzOut) {
-      if (tzOut.includes("Timezone=")) {
-        const m = tzOut.match(/Timezone=([^\r\n]+)/);
-        if (m && m[1]) timezone = m[1].trim();
-      } else if (tzOut.includes("Time zone:")) {
-        const m = tzOut.match(/Time zone:\s*([^\s(]+)/);
-        if (m && m[1]) timezone = m[1].trim();
-      } else if (tzOut.trim() && !tzOut.includes(" ") && tzOut.includes("/")) {
-        timezone = tzOut.trim();
-      }
-
-      if (tzOut.includes("NTP=")) {
-        const m = tzOut.match(/NTP=([^\r\n]+)/);
-        if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "yes";
-      } else if (tzOut.includes("NTP enabled:")) {
-        const m = tzOut.match(/NTP enabled:\s*([^\r\n]+)/);
-        if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "yes";
-      } else if (tzOut.includes("NTP service:")) {
-        const m = tzOut.match(/NTP service:\s*([^\r\n]+)/);
-        if (m && m[1]) ntpEnabled = m[1].trim().toLowerCase() === "active";
-      }
-
-      if (tzOut.includes("NTPSynchronized=")) {
-        const m = tzOut.match(/NTPSynchronized=([^\r\n]+)/);
-        if (m && m[1]) ntpSynchronized = m[1].trim().toLowerCase() === "yes";
-      } else if (tzOut.includes("System clock synchronized:")) {
-        const m = tzOut.match(/System clock synchronized:\s*([^\r\n]+)/);
-        if (m && m[1]) ntpSynchronized = m[1].trim().toLowerCase() === "yes";
-      }
-    }
-  } catch (err: any) {
-    console.log("Notice reading timezone/ntp:", err.message);
   }
 
   try {

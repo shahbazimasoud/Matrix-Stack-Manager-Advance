@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.38.20";
+export const PANEL_VERSION = "2.38.21";
 export const PANEL_BUILD_DATE = "2026-08-27";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.38.21",
+    date: "2026-08-27",
+    title: "Fix Server Date, Time & Timezone Live Synchronization Engine",
+    changes: [
+      "Robust Multi-Linux Time Query: Enhanced server-side datetime aggregation in server.ts with standardized Unix timestamp parsing, timedatectl status detection, and fallback timezone link resolution.",
+      "Live Dynamic Clock & Date Engine: Updated DateTimeConfigTab with automatic token discovery from localStorage, live server date calculation, and precision second ticking synced with target node timezone.",
+      "Instant Initialization & Resync: Removed blocking conditional auth gates on initial load to ensure instant fetching and continuous background clock synchronization."
+    ]
+  },
   {
     version: "2.38.20",
     date: "2026-08-27",

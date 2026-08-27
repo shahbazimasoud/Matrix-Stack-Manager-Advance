@@ -179,14 +179,19 @@ export default function DateTimeConfigTab({
     }
   };
 
+  const getEffectiveToken = () => {
+    return authToken || localStorage.getItem('admin_token') || localStorage.getItem('token') || localStorage.getItem('matrix_auth_token') || '';
+  };
+
   // Fetch Server Date and Time
   const fetchDateTime = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const connParam = activeConnectionId ? `?connId=${encodeURIComponent(activeConnectionId)}` : '';
+      const token = getEffectiveToken();
       const res = await fetch(`/api/system/datetime${connParam}`, {
         headers: {
-          'Authorization': `Bearer ${authToken}`,
+          'Authorization': token ? `Bearer ${token}` : '',
           'x-connection-id': activeConnectionId || ''
         }
       });
@@ -216,9 +221,7 @@ export default function DateTimeConfigTab({
   };
 
   useEffect(() => {
-    if (authToken) {
-      fetchDateTime();
-    }
+    fetchDateTime();
   }, [authToken, activeConnectionId]);
 
   // Live seconds ticker increment and periodic resync
@@ -227,12 +230,10 @@ export default function DateTimeConfigTab({
       setLiveSeconds(prev => (prev + 1) % 60);
     }, 1000);
 
-    // Resync with server every 20 seconds silently
+    // Resync with server every 15 seconds silently
     const resyncTimer = setInterval(() => {
-      if (authToken) {
-        fetchDateTime(true);
-      }
-    }, 20000);
+      fetchDateTime(true);
+    }, 15000);
 
     return () => {
       clearInterval(timer);
@@ -242,12 +243,15 @@ export default function DateTimeConfigTab({
 
   // Calculate live dynamic server time
   const getLiveServerTime = () => {
-    if (!serverInfo) return '00:00:00';
+    if (!serverInfo) {
+      if (loading) return 'Syncing...';
+      return '00:00:00';
+    }
     if (baseTimestamp > 0 && baseLocalTime > 0) {
       const elapsed = Date.now() - baseLocalTime;
       const currentMs = baseTimestamp + elapsed;
       const d = new Date(currentMs);
-      if (serverInfo.timezone) {
+      if (serverInfo.timezone && serverInfo.timezone !== 'UTC' && serverInfo.timezone !== 'Etc/UTC') {
         try {
           return new Intl.DateTimeFormat('en-GB', {
             timeZone: serverInfo.timezone,
@@ -258,26 +262,79 @@ export default function DateTimeConfigTab({
           }).format(d);
         } catch (e) {}
       }
+      
+      if (serverInfo.utcOffset && serverInfo.utcOffset !== '+00:00') {
+        try {
+          const sign = serverInfo.utcOffset.startsWith('-') ? -1 : 1;
+          const cleanOffset = serverInfo.utcOffset.replace(/[+-]/, '');
+          const [h, m] = cleanOffset.split(':').map(Number);
+          const offsetMs = sign * (((h || 0) * 60) + (m || 0)) * 60 * 1000;
+          const targetD = new Date(currentMs + offsetMs);
+          const pad = (n: number) => n.toString().padStart(2, '0');
+          return `${pad(targetD.getUTCHours())}:${pad(targetD.getUTCMinutes())}:${pad(targetD.getUTCSeconds())}`;
+        } catch (e) {}
+      }
+
       const pad = (n: number) => n.toString().padStart(2, '0');
       return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
     }
     return serverInfo.time || '00:00:00';
   };
 
+  // Calculate live dynamic server date
+  const getLiveServerDate = () => {
+    if (!serverInfo) return loading ? '...' : 'YYYY-MM-DD';
+    if (baseTimestamp > 0 && baseLocalTime > 0) {
+      const elapsed = Date.now() - baseLocalTime;
+      const currentMs = baseTimestamp + elapsed;
+      const d = new Date(currentMs);
+      if (serverInfo.timezone && serverInfo.timezone !== 'UTC' && serverInfo.timezone !== 'Etc/UTC') {
+        try {
+          return new Intl.DateTimeFormat('en-CA', {
+            timeZone: serverInfo.timezone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }).format(d);
+        } catch (e) {}
+      }
+      if (serverInfo.utcOffset && serverInfo.utcOffset !== '+00:00') {
+        try {
+          const sign = serverInfo.utcOffset.startsWith('-') ? -1 : 1;
+          const cleanOffset = serverInfo.utcOffset.replace(/[+-]/, '');
+          const [h, m] = cleanOffset.split(':').map(Number);
+          const offsetMs = sign * (((h || 0) * 60) + (m || 0)) * 60 * 1000;
+          const targetD = new Date(currentMs + offsetMs);
+          const pad = (n: number) => n.toString().padStart(2, '0');
+          return `${targetD.getUTCFullYear()}-${pad(targetD.getUTCMonth() + 1)}-${pad(targetD.getUTCDate())}`;
+        } catch (e) {}
+      }
+    }
+    return serverInfo.date || 'YYYY-MM-DD';
+  };
+
   // Format Persian Shamsi date if requested
   const getFormattedPersianDate = (dateStr?: string) => {
-    if (!dateStr) return '';
     try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
+      let d: Date;
+      if (baseTimestamp > 0 && baseLocalTime > 0) {
+        const elapsed = Date.now() - baseLocalTime;
+        d = new Date(baseTimestamp + elapsed);
+      } else if (dateStr) {
+        d = new Date(dateStr);
+      } else {
+        d = new Date();
+      }
+      if (isNaN(d.getTime())) return dateStr || '';
       return new Intl.DateTimeFormat('fa-IR', {
+        timeZone: serverInfo?.timezone || 'Asia/Tehran',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
         weekday: 'long'
       }).format(d);
     } catch (e) {
-      return dateStr;
+      return dateStr || '';
     }
   };
 
@@ -534,7 +591,7 @@ export default function DateTimeConfigTab({
               <span>{loc('تاریخ تقویمی سرور', 'Current Server Date')}</span>
             </div>
             <div className="text-2xl sm:text-3xl font-mono font-bold text-white tracking-wide">
-              {serverInfo?.date || 'YYYY-MM-DD'}
+              {getLiveServerDate()}
             </div>
             {lang === 'fa' && (
               <p className="text-xs text-amber-300/90 font-medium">

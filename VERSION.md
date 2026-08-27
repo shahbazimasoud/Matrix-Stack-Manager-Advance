@@ -16,9 +16,15 @@
 
 ---
 
-## Current Panel Version: **v2.38.20** (Released: 2026-08-27)
+## Current Panel Version: **v2.38.21** (Released: 2026-08-27)
 
 ### Changelog History
+
+#### **v2.38.21** - 2026-08-27
+- **Fix Server Date, Time & Timezone Live Synchronization Engine**:
+  - **Robust Multi-Linux Time Query**: Enhanced server-side datetime aggregation in `server.ts` with standardized Unix timestamp parsing, `timedatectl` status detection, and fallback timezone link resolution across all distributions.
+  - **Live Dynamic Clock & Date Engine**: Updated `DateTimeConfigTab` with automatic token discovery from `localStorage`, live server date calculation, and precision second ticking synced with target node timezone.
+  - **Instant Initialization & Resync**: Removed blocking conditional auth gates on initial load to ensure instant fetching and continuous background clock synchronization.
 
 #### **v2.38.20** - 2026-08-27
 - **Restore Remote Server Date & Time API Endpoints & Real-Time Clock Synchronization**:
