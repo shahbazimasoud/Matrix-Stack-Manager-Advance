@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.39.1";
+export const PANEL_VERSION = "2.40.0";
 export const PANEL_BUILD_DATE = "2026-09-02";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.40.0",
+    date: "2026-09-02",
+    title: "Multi-Server DB Auto-Detection & Distributed Cluster Connection Diagnostics",
+    changes: [
+      "Distributed DB Parameter Auto-Detection: Detect DB Info now intelligently routes SSH inspections across PostgreSQL DB and Synapse nodes in distributed clusters, prioritizing PostgreSQL node inspection and credential verification.",
+      "Full Cluster Diagnostics & Service Validation: Test Connection executes simultaneous SSH and service reachability checks across Synapse (Matrix API:8008), PostgreSQL (Port:5432), and Element Web (HTTP:80) nodes.",
+      "Multi-Node Visual Feedback Cards: Enhanced Connection Manager form and saved connection cards to display distinct online/offline status, SSH handshake results, and service health across each server in the cluster.",
+      "Bilingual Topology & Diagnostics UI: Fully translated Persian (فارسی) and English diagnostics messages, guidance, and cluster error reporting."
+    ]
+  },
   {
     version: "2.39.1",
     date: "2026-09-02",

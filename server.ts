@@ -3434,17 +3434,21 @@ async function detectRemoteDatabaseCredentials(profile: any): Promise<{
   dbName?: string;
   dbUser?: string;
   dbPass?: string;
+  dbVerified?: boolean;
   source?: string;
   serverName?: string;
   message?: string;
   error?: string;
+  checkedNodes?: Array<{ role: string; host: string; status: string }>;
 }> {
   try {
     if (!profile) {
       return { success: false, error: "Connection profile configuration is required." };
     }
 
-    const isLocal = profile.id === "local" || profile.host === "localhost" || profile.host === "127.0.0.1" || !profile.host;
+    const isDistributed = profile.deploymentMode === "distributed" || !!(profile.databaseNode?.host || profile.synapseNode?.host);
+    const isLocal = !isDistributed && (profile.id === "local" || profile.host === "localhost" || profile.host === "127.0.0.1" || !profile.host);
+    const checkedNodes: Array<{ role: string; host: string; status: string }> = [];
 
     let candidatePaths = [
       profile.homeserverYamlPath,
@@ -3458,106 +3462,287 @@ async function detectRemoteDatabaseCredentials(profile: any): Promise<{
     let extracted: any = null;
     let foundSource = "";
 
-    // 1. If remote SSH, test basic connectivity first
-    if (!isLocal && profile.authType !== "agent") {
-      try {
-        const pingTest = await executeSSHCommand(profile, "echo '__SSH_READY__'");
-        if (!pingTest.includes("__SSH_READY__")) {
+    // ========================================================================
+    // DISTRIBUTED CLUSTER MODE DETECTION
+    // ========================================================================
+    if (isDistributed) {
+      const dbNode = profile.databaseNode;
+      const synNode = profile.synapseNode || profile;
+      const elemNode = profile.elementNode;
+
+      // 1. PRIORITY 1: Check PostgreSQL Database Node if configured
+      if (dbNode && dbNode.host && dbNode.host.trim() !== "localhost" && dbNode.host.trim() !== "127.0.0.1") {
+        try {
+          const dbSshTest = await executeSSHCommand(profile, "echo '__DB_NODE_OK__'", "database");
+          if (dbSshTest.includes("__DB_NODE_OK__")) {
+            checkedNodes.push({ role: "database", host: dbNode.host, status: "SSH Connected & Verified" });
+            
+            // Check for DB node configurations / postgresql status
+            try {
+              const sudoPrefix = dbNode.username === "root" ? "" : "sudo ";
+              const dbConfCheck = await executeSSHCommand(
+                profile,
+                `${sudoPrefix}cat /etc/matrix-stack.conf 2>/dev/null || ${sudoPrefix}cat /root/.pgpass 2>/dev/null || true`,
+                "database"
+              );
+              if (dbConfCheck && (dbConfCheck.includes("PG_USER") || dbConfCheck.includes("POSTGRES_USER"))) {
+                const pgUserMatch = dbConfCheck.match(/PG_USER\s*=\s*["']?([^"'\r\n]+)["']?/i) || dbConfCheck.match(/POSTGRES_USER\s*=\s*["']?([^"'\r\n]+)["']?/i);
+                const pgPassMatch = dbConfCheck.match(/PG_PASSWORD\s*=\s*["']?([^"'\r\n]+)["']?/i) || dbConfCheck.match(/POSTGRES_PASSWORD\s*=\s*["']?([^"'\r\n]+)["']?/i);
+                const pgDbMatch = dbConfCheck.match(/PG_DB\s*=\s*["']?([^"'\r\n]+)["']?/i) || dbConfCheck.match(/POSTGRES_DB\s*=\s*["']?([^"'\r\n]+)["']?/i);
+                const pgPortMatch = dbConfCheck.match(/PG_PORT\s*=\s*["']?(\d+)["']?/i) || dbConfCheck.match(/POSTGRES_PORT\s*=\s*["']?(\d+)["']?/i);
+
+                if (pgUserMatch || pgPassMatch || pgDbMatch) {
+                  extracted = {
+                    dbHost: dbNode.host,
+                    dbPort: (pgPortMatch && parseInt(pgPortMatch[1])) || Number(dbNode.servicePort) || 5432,
+                    dbName: (pgDbMatch && pgDbMatch[1]?.trim()) || "synapse",
+                    dbUser: (pgUserMatch && pgUserMatch[1]?.trim()) || "synapse_user",
+                    dbPass: (pgPassMatch && pgPassMatch[1]?.trim()) || ""
+                  };
+                  foundSource = `Database Node (${dbNode.host}:/etc/matrix-stack.conf)`;
+                }
+              }
+            } catch (e) {}
+          } else {
+            checkedNodes.push({ role: "database", host: dbNode.host, status: "SSH Handshake Incomplete" });
+          }
+        } catch (dbErr: any) {
+          checkedNodes.push({ role: "database", host: dbNode.host, status: `SSH Error: ${dbErr.message}` });
+        }
+      }
+
+      // 2. Inspect Synapse Node (holds homeserver.yaml with database credentials for Matrix)
+      const synHost = synNode.host || profile.host;
+      if (synHost) {
+        try {
+          const synSshTest = await executeSSHCommand(profile, "echo '__SYNAPSE_NODE_OK__'", "synapse");
+          if (synSshTest.includes("__SYNAPSE_NODE_OK__")) {
+            checkedNodes.push({ role: "synapse", host: synHost, status: "SSH Connected & Config Read" });
+
+            // Query conf.d files if available on Synapse node
+            try {
+              const sudoPrefix = (synNode.username || profile.username) === "root" ? "" : "sudo ";
+              const confdFiles = await executeSSHCommand(profile, `${sudoPrefix}ls -1 /etc/matrix-synapse/conf.d/*.yaml 2>/dev/null || true`, "synapse");
+              const confdList = confdFiles.split("\n").map(s => s.trim()).filter(s => s.endsWith(".yaml"));
+              candidatePaths = [...candidatePaths, ...confdList];
+            } catch (e) {}
+
+            for (const filePath of candidatePaths) {
+              try {
+                const content = await readConfigContent(filePath, "", resolveNodeProfile(profile, "synapse"));
+                if (!content || !content.trim()) continue;
+
+                // Check matrix-stack.conf
+                if (filePath.endsWith(".conf") || content.includes("PG_USER") || content.includes("PG_DB")) {
+                  const pgUserMatch = content.match(/PG_USER\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_USER\s*=\s*["']?([^"'\r\n]+)["']?/i);
+                  const pgPassMatch = content.match(/PG_PASSWORD\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_PASSWORD\s*=\s*["']?([^"'\r\n]+)["']?/i);
+                  const pgDbMatch = content.match(/PG_DB\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_DB\s*=\s*["']?([^"'\r\n]+)["']?/i);
+                  const pgPortMatch = content.match(/PG_PORT\s*=\s*["']?(\d+)["']?/i) || content.match(/POSTGRES_PORT\s*=\s*["']?(\d+)["']?/i);
+                  const pgHostMatch = content.match(/PG_HOST\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_HOST\s*=\s*["']?([^"'\r\n]+)["']?/i);
+
+                  if (pgUserMatch || pgPassMatch || pgDbMatch) {
+                    extracted = {
+                      dbHost: dbNode?.host || (pgHostMatch && pgHostMatch[1]?.trim()) || "127.0.0.1",
+                      dbPort: (pgPortMatch && parseInt(pgPortMatch[1])) || (dbNode?.servicePort ? Number(dbNode.servicePort) : 5432),
+                      dbName: (pgDbMatch && pgDbMatch[1]?.trim()) || "synapse",
+                      dbUser: (pgUserMatch && pgUserMatch[1]?.trim()) || "synapse_user",
+                      dbPass: (pgPassMatch && pgPassMatch[1]?.trim()) || ""
+                    };
+                    foundSource = `Synapse Node (${filePath})`;
+                    break;
+                  }
+                }
+
+                // Try YAML parsing for homeserver.yaml
+                let doc: any = null;
+                try {
+                  doc = yaml.load(content);
+                } catch (yErr) {}
+
+                if (doc && typeof doc === "object" && doc.database) {
+                  const dbArgs = doc.database.args || {};
+                  extracted = {
+                    dbHost: dbNode?.host || (dbArgs.host && dbArgs.host !== "127.0.0.1" && dbArgs.host !== "localhost" ? dbArgs.host : synHost),
+                    dbPort: dbArgs.port ? parseInt(String(dbArgs.port)) : (dbNode?.servicePort ? Number(dbNode.servicePort) : 5432),
+                    dbName: dbArgs.database || "synapse",
+                    dbUser: dbArgs.user || "synapse_user",
+                    dbPass: dbArgs.password ? String(dbArgs.password) : "",
+                    serverName: doc.server_name || undefined
+                  };
+                  foundSource = `Synapse Node (${filePath})`;
+                  break;
+                }
+
+                // Regex fallback for database section
+                if (content.includes("database:") || content.includes("psycopg2")) {
+                  const dbIndex = content.indexOf("database:");
+                  const dbSection = content.substring(dbIndex, dbIndex + 1500);
+                  const userMatch = dbSection.match(/user:\s*["']?([^"'\r\n#]+)["']?/i);
+                  const passMatch = dbSection.match(/password:\s*["']?([^"'\r\n#]+)["']?/i);
+                  const nameMatch = dbSection.match(/database:\s*["']?([^"'\r\n#]+)["']?/i);
+                  const hostMatch = dbSection.match(/host:\s*["']?([^"'\r\n#]+)["']?/i);
+                  const portMatch = dbSection.match(/port:\s*(\d+)/i);
+
+                  if (userMatch || passMatch || nameMatch) {
+                    extracted = {
+                      dbHost: dbNode?.host || (hostMatch && hostMatch[1]?.trim() !== "127.0.0.1" && hostMatch[1]?.trim() !== "localhost" ? hostMatch[1]?.trim() : synHost),
+                      dbPort: (portMatch && parseInt(portMatch[1])) || (dbNode?.servicePort ? Number(dbNode.servicePort) : 5432),
+                      dbName: (nameMatch && nameMatch[1]?.trim()) || "synapse",
+                      dbUser: (userMatch && userMatch[1]?.trim()) || "synapse_user",
+                      dbPass: (passMatch && passMatch[1]?.trim()) || ""
+                    };
+                    foundSource = `Synapse Node (${filePath})`;
+                    break;
+                  }
+                }
+              } catch (err) {}
+            }
+          } else {
+            checkedNodes.push({ role: "synapse", host: synHost, status: "SSH Handshake Incomplete" });
+          }
+        } catch (synErr: any) {
+          checkedNodes.push({ role: "synapse", host: synHost, status: `SSH Error: ${synErr.message}` });
+        }
+      }
+
+      // 3. Optional: Inspect Element Node for completeness
+      if (elemNode && elemNode.host && elemNode.host !== synHost && elemNode.host !== dbNode?.host) {
+        try {
+          const elemSshTest = await executeSSHCommand(profile, "echo '__ELEM_NODE_OK__'", "element");
+          if (elemSshTest.includes("__ELEM_NODE_OK__")) {
+            checkedNodes.push({ role: "element", host: elemNode.host, status: "SSH Connected" });
+          }
+        } catch (e) {}
+      }
+    } else {
+      // ========================================================================
+      // STANDALONE / SINGLE SERVER MODE DETECTION
+      // ========================================================================
+      if (!isLocal && profile.authType !== "agent") {
+        try {
+          const pingTest = await executeSSHCommand(profile, "echo '__SSH_READY__'");
+          if (!pingTest.includes("__SSH_READY__")) {
+            return {
+              success: false,
+              error: "Could not establish SSH connection to the target server. Please verify Host, Port, Username, and Password or Private Key."
+            };
+          }
+          checkedNodes.push({ role: "standalone", host: profile.host, status: "SSH Connected" });
+        } catch (sshErr: any) {
           return {
             success: false,
-            error: "Could not establish SSH connection to the target server. Please verify Host, Port, Username, and Password or Private Key."
+            error: `SSH connection failed: ${sshErr.message || sshErr}`
           };
         }
-      } catch (sshErr: any) {
-        return {
-          success: false,
-          error: `SSH connection failed: ${sshErr.message || sshErr}`
-        };
+
+        // Query list of YAML files in /etc/matrix-synapse/conf.d if existing
+        try {
+          const sudoPrefix = profile.username === "root" ? "" : "sudo ";
+          const confdFiles = await executeSSHCommand(profile, `${sudoPrefix}ls -1 /etc/matrix-synapse/conf.d/*.yaml 2>/dev/null || true`);
+          const confdList = confdFiles.split("\n").map(s => s.trim()).filter(s => s.endsWith(".yaml"));
+          candidatePaths = [...candidatePaths, ...confdList];
+        } catch (e) {}
       }
 
-      // Query list of YAML files in /etc/matrix-synapse/conf.d if existing
-      try {
-        const sudoPrefix = profile.username === "root" ? "" : "sudo ";
-        const confdFiles = await executeSSHCommand(profile, `${sudoPrefix}ls -1 /etc/matrix-synapse/conf.d/*.yaml 2>/dev/null || true`);
-        const confdList = confdFiles.split("\n").map(s => s.trim()).filter(s => s.endsWith(".yaml"));
-        candidatePaths = [...candidatePaths, ...confdList];
-      } catch (e) {
-        // ignore
-      }
-    }
+      // Try reading configs
+      for (const filePath of candidatePaths) {
+        try {
+          let content = "";
+          if (isLocal) {
+            content = readSandboxFile(filePath, "");
+            if (!content) {
+              const realPath = path.join(process.cwd(), filePath.startsWith("/") ? filePath.slice(1) : filePath);
+              if (fs.existsSync(realPath)) {
+                content = fs.readFileSync(realPath, "utf8");
+              }
+            }
+          } else {
+            content = await readConfigContent(filePath, "", profile);
+          }
 
-    // Try reading configs
-    for (const filePath of candidatePaths) {
-      try {
-        let content = "";
-        if (isLocal) {
-          content = readSandboxFile(filePath, "");
-          if (!content) {
-            const realPath = path.join(process.cwd(), filePath.startsWith("/") ? filePath.slice(1) : filePath);
-            if (fs.existsSync(realPath)) {
-              content = fs.readFileSync(realPath, "utf8");
+          if (!content || !content.trim()) continue;
+
+          // Check if file is matrix-stack.conf
+          if (filePath.endsWith(".conf") || content.includes("PG_USER") || content.includes("PG_DB")) {
+            const pgUserMatch = content.match(/PG_USER\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_USER\s*=\s*["']?([^"'\r\n]+)["']?/i);
+            const pgPassMatch = content.match(/PG_PASSWORD\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_PASSWORD\s*=\s*["']?([^"'\r\n]+)["']?/i);
+            const pgDbMatch = content.match(/PG_DB\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_DB\s*=\s*["']?([^"'\r\n]+)["']?/i);
+            const pgPortMatch = content.match(/PG_PORT\s*=\s*["']?(\d+)["']?/i) || content.match(/POSTGRES_PORT\s*=\s*["']?(\d+)["']?/i);
+            const pgHostMatch = content.match(/PG_HOST\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_HOST\s*=\s*["']?([^"'\r\n]+)["']?/i);
+
+            if (pgUserMatch || pgPassMatch || pgDbMatch) {
+              extracted = {
+                dbHost: (pgHostMatch && pgHostMatch[1]?.trim()) || "127.0.0.1",
+                dbPort: (pgPortMatch && parseInt(pgPortMatch[1])) || 5432,
+                dbName: (pgDbMatch && pgDbMatch[1]?.trim()) || "synapse",
+                dbUser: (pgUserMatch && pgUserMatch[1]?.trim()) || "synapse_user",
+                dbPass: (pgPassMatch && pgPassMatch[1]?.trim()) || ""
+              };
+              foundSource = filePath;
+              break;
             }
           }
-        } else {
-          content = await readConfigContent(filePath, "", profile);
-        }
 
-        if (!content || !content.trim()) continue;
+          // Try YAML parsing for homeserver.yaml
+          let doc: any = null;
+          try {
+            doc = yaml.load(content);
+          } catch (yErr) {}
 
-        // Check if file is matrix-stack.conf
-        if (filePath.endsWith(".conf") || content.includes("PG_USER") || content.includes("PG_DB")) {
-          const pgUserMatch = content.match(/PG_USER\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_USER\s*=\s*["']?([^"'\r\n]+)["']?/i);
-          const pgPassMatch = content.match(/PG_PASSWORD\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_PASSWORD\s*=\s*["']?([^"'\r\n]+)["']?/i);
-          const pgDbMatch = content.match(/PG_DB\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_DB\s*=\s*["']?([^"'\r\n]+)["']?/i);
-          const pgPortMatch = content.match(/PG_PORT\s*=\s*["']?(\d+)["']?/i) || content.match(/POSTGRES_PORT\s*=\s*["']?(\d+)["']?/i);
-          const pgHostMatch = content.match(/PG_HOST\s*=\s*["']?([^"'\r\n]+)["']?/i) || content.match(/POSTGRES_HOST\s*=\s*["']?([^"'\r\n]+)["']?/i);
-
-          if (pgUserMatch || pgPassMatch || pgDbMatch) {
+          if (doc && typeof doc === "object" && doc.database) {
+            const dbArgs = doc.database.args || {};
             extracted = {
-              dbHost: (pgHostMatch && pgHostMatch[1]?.trim()) || "127.0.0.1",
-              dbPort: (pgPortMatch && parseInt(pgPortMatch[1])) || 5432,
-              dbName: (pgDbMatch && pgDbMatch[1]?.trim()) || "synapse",
-              dbUser: (pgUserMatch && pgUserMatch[1]?.trim()) || "synapse_user",
-              dbPass: (pgPassMatch && pgPassMatch[1]?.trim()) || ""
+              dbHost: dbArgs.host || "127.0.0.1",
+              dbPort: dbArgs.port ? parseInt(String(dbArgs.port)) : 5432,
+              dbName: dbArgs.database || "synapse",
+              dbUser: dbArgs.user || "synapse_user",
+              dbPass: dbArgs.password ? String(dbArgs.password) : "",
+              serverName: doc.server_name || undefined
             };
             foundSource = filePath;
             break;
           }
-        }
 
-        // Try YAML parsing for homeserver.yaml
-        let doc: any = null;
+          // Regex fallback for database section in homeserver.yaml
+          if (content.includes("database:") || content.includes("psycopg2")) {
+            const dbIndex = content.indexOf("database:");
+            const dbSection = content.substring(dbIndex, dbIndex + 1500);
+            const userMatch = dbSection.match(/user:\s*["']?([^"'\r\n#]+)["']?/i);
+            const passMatch = dbSection.match(/password:\s*["']?([^"'\r\n#]+)["']?/i);
+            const nameMatch = dbSection.match(/database:\s*["']?([^"'\r\n#]+)["']?/i);
+            const hostMatch = dbSection.match(/host:\s*["']?([^"'\r\n#]+)["']?/i);
+            const portMatch = dbSection.match(/port:\s*(\d+)/i);
+
+            if (userMatch || passMatch || nameMatch) {
+              extracted = {
+                dbHost: (hostMatch && hostMatch[1]?.trim()) || "127.0.0.1",
+                dbPort: (portMatch && parseInt(portMatch[1])) || 5432,
+                dbName: (nameMatch && nameMatch[1]?.trim()) || "synapse",
+                dbUser: (userMatch && userMatch[1]?.trim()) || "synapse_user",
+                dbPass: (passMatch && passMatch[1]?.trim()) || ""
+              };
+              foundSource = filePath;
+              break;
+            }
+          }
+        } catch (err) {}
+      }
+
+      // If still not extracted and it is remote SSH, try direct grep
+      if (!extracted && !isLocal && profile.authType !== "agent") {
         try {
-          doc = yaml.load(content);
-        } catch (yErr) {
-          // YAML parsing fallback
-        }
+          const sudoPrefix = profile.username === "root" ? "" : "sudo ";
+          const grepRes = await executeSSHCommand(
+            profile,
+            `${sudoPrefix}grep -E "user:|password:|database:|host:|port:" /etc/matrix-synapse/homeserver.yaml /etc/matrix-synapse/conf.d/*.yaml /etc/matrix-stack.conf 2>/dev/null || true`
+          );
+          if (grepRes && (grepRes.includes("user:") || grepRes.includes("password:"))) {
+            const userMatch = grepRes.match(/user:\s*["']?([^"'\r\n#]+)["']?/i);
+            const passMatch = grepRes.match(/password:\s*["']?([^"'\r\n#]+)["']?/i);
+            const nameMatch = grepRes.match(/database:\s*["']?([^"'\r\n#]+)["']?/i);
+            const hostMatch = grepRes.match(/host:\s*["']?([^"'\r\n#]+)["']?/i);
+            const portMatch = grepRes.match(/port:\s*(\d+)/i);
 
-        if (doc && typeof doc === "object" && doc.database) {
-          const dbArgs = doc.database.args || {};
-          extracted = {
-            dbHost: dbArgs.host || "127.0.0.1",
-            dbPort: dbArgs.port ? parseInt(String(dbArgs.port)) : 5432,
-            dbName: dbArgs.database || "synapse",
-            dbUser: dbArgs.user || "synapse_user",
-            dbPass: dbArgs.password ? String(dbArgs.password) : "",
-            serverName: doc.server_name || undefined
-          };
-          foundSource = filePath;
-          break;
-        }
-
-        // Regex fallback for database section in homeserver.yaml
-        if (content.includes("database:") || content.includes("psycopg2")) {
-          const dbIndex = content.indexOf("database:");
-          const dbSection = content.substring(dbIndex, dbIndex + 1500);
-          const userMatch = dbSection.match(/user:\s*["']?([^"'\r\n#]+)["']?/i);
-          const passMatch = dbSection.match(/password:\s*["']?([^"'\r\n#]+)["']?/i);
-          const nameMatch = dbSection.match(/database:\s*["']?([^"'\r\n#]+)["']?/i);
-          const hostMatch = dbSection.match(/host:\s*["']?([^"'\r\n#]+)["']?/i);
-          const portMatch = dbSection.match(/port:\s*(\d+)/i);
-
-          if (userMatch || passMatch || nameMatch) {
             extracted = {
               dbHost: (hostMatch && hostMatch[1]?.trim()) || "127.0.0.1",
               dbPort: (portMatch && parseInt(portMatch[1])) || 5432,
@@ -3565,61 +3750,59 @@ async function detectRemoteDatabaseCredentials(profile: any): Promise<{
               dbUser: (userMatch && userMatch[1]?.trim()) || "synapse_user",
               dbPass: (passMatch && passMatch[1]?.trim()) || ""
             };
-            foundSource = filePath;
-            break;
+            foundSource = "Remote Synapse Configuration (/etc/matrix-synapse/)";
           }
-        }
-      } catch (err) {
-        // continue to next path
-      }
-    }
-
-    // If still not extracted and it is remote SSH, try direct grep
-    if (!extracted && !isLocal && profile.authType !== "agent") {
-      try {
-        const sudoPrefix = profile.username === "root" ? "" : "sudo ";
-        const grepRes = await executeSSHCommand(
-          profile,
-          `${sudoPrefix}grep -E "user:|password:|database:|host:|port:" /etc/matrix-synapse/homeserver.yaml /etc/matrix-synapse/conf.d/*.yaml /etc/matrix-stack.conf 2>/dev/null || true`
-        );
-        if (grepRes && (grepRes.includes("user:") || grepRes.includes("password:"))) {
-          const userMatch = grepRes.match(/user:\s*["']?([^"'\r\n#]+)["']?/i);
-          const passMatch = grepRes.match(/password:\s*["']?([^"'\r\n#]+)["']?/i);
-          const nameMatch = grepRes.match(/database:\s*["']?([^"'\r\n#]+)["']?/i);
-          const hostMatch = grepRes.match(/host:\s*["']?([^"'\r\n#]+)["']?/i);
-          const portMatch = grepRes.match(/port:\s*(\d+)/i);
-
-          extracted = {
-            dbHost: (hostMatch && hostMatch[1]?.trim()) || "127.0.0.1",
-            dbPort: (portMatch && parseInt(portMatch[1])) || 5432,
-            dbName: (nameMatch && nameMatch[1]?.trim()) || "synapse",
-            dbUser: (userMatch && userMatch[1]?.trim()) || "synapse_user",
-            dbPass: (passMatch && passMatch[1]?.trim()) || ""
-          };
-          foundSource = "Remote Synapse Configuration (/etc/matrix-synapse/)";
-        }
-      } catch (e) {
-        // ignore
+        } catch (e) {}
       }
     }
 
     if (!extracted) {
       return {
         success: false,
-        error: `Could not automatically find PostgreSQL configuration in homeserver.yaml or config paths on ${profile.host || "server"}. You can enter the details manually in Advanced Settings.`
+        checkedNodes,
+        error: isDistributed
+          ? `Could not automatically extract PostgreSQL credentials across the configured cluster nodes. Please verify SSH connectivity to Database & Synapse nodes or enter the details manually in Advanced Settings.`
+          : `Could not automatically find PostgreSQL configuration in homeserver.yaml or config paths on ${profile.host || "server"}. You can enter the details manually in Advanced Settings.`
       };
     }
 
+    const finalDbHost = isDistributed && profile.databaseNode?.host ? profile.databaseNode.host : (extracted.dbHost || "127.0.0.1");
+    const finalDbPort = Number(profile.databaseNode?.servicePort || extracted.dbPort || 5432);
+    const finalDbUser = extracted.dbUser || "synapse_user";
+    const finalDbPass = extracted.dbPass || "";
+    const finalDbName = extracted.dbName || "synapse";
+
+    // Test live PostgreSQL connectivity with the extracted parameters
+    let dbVerified = false;
+    try {
+      const testProfile = {
+        ...profile,
+        dbHost: finalDbHost,
+        dbPort: finalDbPort,
+        dbUser: finalDbUser,
+        dbPass: finalDbPass,
+        dbName: finalDbName
+      };
+      const verifyRes = await queryRemotePostgres(testProfile, "SELECT 1 as connected");
+      if (verifyRes && verifyRes[0]?.connected === 1) {
+        dbVerified = true;
+      }
+    } catch (e) {}
+
     return {
       success: true,
-      dbHost: extracted.dbHost || "127.0.0.1",
-      dbPort: Number(extracted.dbPort) || 5432,
-      dbName: extracted.dbName || "synapse",
-      dbUser: extracted.dbUser || "synapse_user",
-      dbPass: extracted.dbPass || "",
+      dbHost: finalDbHost,
+      dbPort: finalDbPort,
+      dbName: finalDbName,
+      dbUser: finalDbUser,
+      dbPass: finalDbPass,
+      dbVerified,
       source: foundSource,
       serverName: extracted.serverName,
-      message: `Successfully extracted database parameters from ${foundSource}!`
+      checkedNodes,
+      message: isDistributed
+        ? `Successfully extracted database parameters across distributed nodes (${foundSource})${dbVerified ? ' and verified live PostgreSQL connection!' : '!'}`
+        : `Successfully extracted database parameters from ${foundSource}${dbVerified ? ' and verified live PostgreSQL connection!' : '!'}`
     };
   } catch (error: any) {
     return {
@@ -3842,38 +4025,101 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
   }
 
   try {
-    const clusterNodesTest: Array<{ role: string; host: string; ssh: boolean; error?: string }> = [];
+    const isDistributed = profile.deploymentMode === "distributed" || !!(profile.synapseNode?.host || profile.databaseNode?.host || profile.elementNode?.host);
+    const clusterNodesTest: Array<{
+      role: string;
+      name: string;
+      host: string;
+      ssh: boolean;
+      service?: boolean;
+      serviceName?: string;
+      error?: string;
+      details?: string;
+    }> = [];
 
-    // In distributed mode, verify all configured nodes (Synapse, Database, Element)
-    if (profile.deploymentMode === "distributed" || profile.synapseNode || profile.databaseNode || profile.elementNode) {
-      const nodesToCheck = [
-        { role: "synapse", target: "synapse" as const, host: profile.synapseNode?.host || profile.host },
-        { role: "database", target: "database" as const, host: profile.databaseNode?.host || profile.dbHost || profile.host },
-        { role: "element", target: "element" as const, host: profile.elementNode?.host || profile.host }
-      ];
+    // 1. In distributed mode, verify all configured nodes (Synapse, Database, Element)
+    if (isDistributed) {
+      // 1a. Test Synapse Node SSH
+      const synHost = profile.synapseNode?.host || profile.host || "unknown";
+      let synSshOk = false;
+      let synSshErr = "";
+      try {
+        const res = await executeSSHCommand(profile, "echo '__SYNAPSE_SSH_OK__'", "synapse");
+        synSshOk = res.includes("__SYNAPSE_SSH_OK__");
+        if (!synSshOk) synSshErr = "SSH handshake did not return confirmation";
+      } catch (e: any) {
+        synSshErr = e.message || "SSH handshake failed";
+      }
 
-      for (const node of nodesToCheck) {
+      // 1b. Test Database Node SSH
+      const dbHost = profile.databaseNode?.host || profile.dbHost || profile.host || "unknown";
+      let dbSshOk = false;
+      let dbSshErr = "";
+      try {
+        const res = await executeSSHCommand(profile, "echo '__DB_SSH_OK__'", "database");
+        dbSshOk = res.includes("__DB_SSH_OK__");
+        if (!dbSshOk) dbSshErr = "SSH handshake did not return confirmation";
+      } catch (e: any) {
+        dbSshErr = e.message || "SSH handshake failed";
+      }
+
+      // 1c. Test Element Node SSH
+      const elemHost = profile.elementNode?.host || profile.host || "unknown";
+      let elemSshOk = false;
+      let elemSshErr = "";
+      try {
+        const res = await executeSSHCommand(profile, "echo '__ELEM_SSH_OK__'", "element");
+        elemSshOk = res.includes("__ELEM_SSH_OK__");
+        if (!elemSshOk) elemSshErr = "SSH handshake did not return confirmation";
+      } catch (e: any) {
+        elemSshErr = e.message || "SSH handshake failed";
+      }
+
+      // 1d. Test Element Web Service / Files on Element Node
+      let elemWebOk = false;
+      let elemWebErr = "";
+      if (elemSshOk) {
         try {
-          const res = await executeSSHCommand(profile, "echo 'SSH_OK'", node.target);
-          const isOk = res.includes("SSH_OK");
-          clusterNodesTest.push({
-            role: node.role,
-            host: node.host || "unknown",
-            ssh: isOk,
-            error: isOk ? undefined : "SSH handshake failed"
-          });
-        } catch (nodeErr: any) {
-          clusterNodesTest.push({
-            role: node.role,
-            host: node.host || "unknown",
-            ssh: false,
-            error: nodeErr.message
-          });
+          const elemPort = Number(profile.elementNode?.servicePort) || 80;
+          const checkCmd = `test -d /var/www/element || test -f /var/www/element/config.json || test -f /var/www/element/index.html || systemctl is-active nginx 2>/dev/null || curl -s -I http://127.0.0.1:${elemPort} 2>/dev/null || true`;
+          const elemRes = await executeSSHCommand(profile, checkCmd, "element");
+          if (elemRes.includes("HTTP/") || elemRes.includes("active") || elemRes.trim().length === 0) {
+            elemWebOk = true;
+          }
+        } catch (e: any) {
+          elemWebErr = e.message;
         }
       }
+
+      // Add to clusterNodes list
+      clusterNodesTest.push({
+        role: "synapse",
+        name: "Synapse Core Node",
+        host: synHost,
+        ssh: synSshOk,
+        error: !synSshOk ? synSshErr : undefined
+      });
+
+      clusterNodesTest.push({
+        role: "database",
+        name: "PostgreSQL DB Node",
+        host: dbHost,
+        ssh: dbSshOk,
+        error: !dbSshOk ? dbSshErr : undefined
+      });
+
+      clusterNodesTest.push({
+        role: "element",
+        name: "Element Web Node",
+        host: elemHost,
+        ssh: elemSshOk,
+        service: elemWebOk,
+        serviceName: `Element Web / HTTP (:${Number(profile.elementNode?.servicePort) || 80})`,
+        error: !elemSshOk ? elemSshErr : !elemWebOk && elemWebErr ? elemWebErr : undefined
+      });
     }
 
-    // 1. Test Primary SSH Connection (Synapse / Default node)
+    // 2. Test Primary SSH Connection (Synapse / Default node)
     const testResult = await executeSSHCommand(profile, "echo 'SSH_OK'", "synapse");
     if (!testResult.includes("SSH_OK")) {
       return res.json({ 
@@ -3886,7 +4132,7 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
       });
     }
     
-    // 2. Test PostgreSQL Connection over SSH (routed to Database node in distributed mode)
+    // 3. Test PostgreSQL Connection over SSH (routed to Database node in distributed mode)
     let dbOk = false;
     let dbErrMsg = "";
     try {
@@ -3900,7 +4146,17 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
       dbErrMsg = dbErr.message;
     }
 
-    // 3. Test Matrix / Synapse API over SSH
+    // Update Database node test with service status
+    const dbNodeIndex = clusterNodesTest.findIndex(n => n.role === "database");
+    if (dbNodeIndex !== -1) {
+      clusterNodesTest[dbNodeIndex].service = dbOk;
+      clusterNodesTest[dbNodeIndex].serviceName = `PostgreSQL (:${profile.databaseNode?.servicePort || profile.dbPort || 5432})`;
+      if (!dbOk && !clusterNodesTest[dbNodeIndex].error) {
+        clusterNodesTest[dbNodeIndex].error = dbErrMsg || "PostgreSQL connection failed";
+      }
+    }
+
+    // 4. Test Matrix / Synapse API over SSH
     let apiOk = false;
     let apiErrMsg = "";
     let acquiredAdminToken: string | undefined = undefined;
@@ -3915,7 +4171,7 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
       const safeSSHExec = async (cmd: string): Promise<string> => {
         try {
           const fullCmd = `${sudoPrefix}${cmd} 2>/dev/null || true`;
-          const res = await executeSSHCommand(profile, fullCmd);
+          const res = await executeSSHCommand(profile, fullCmd, "synapse");
           return res || "";
         } catch (e) {
           return "";
@@ -4065,9 +4321,21 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
       apiErrMsg = apiErr.message;
     }
 
+    // Update Synapse node test with service status
+    const synNodeIndex = clusterNodesTest.findIndex(n => n.role === "synapse");
+    if (synNodeIndex !== -1) {
+      clusterNodesTest[synNodeIndex].service = apiOk;
+      clusterNodesTest[synNodeIndex].serviceName = `Matrix API (:${profile.synapseNode?.servicePort || profile.apiPort || 8008})`;
+      if (!apiOk && !clusterNodesTest[synNodeIndex].error) {
+        clusterNodesTest[synNodeIndex].error = apiErrMsg || "Matrix API unreachable";
+      }
+    }
+
+    const allSshOk = clusterNodesTest.length > 0 ? clusterNodesTest.every(n => n.ssh) : true;
+
     return res.json({
-      success: true,
-      ssh: true,
+      success: allSshOk && dbOk && apiOk,
+      ssh: allSshOk,
       db: dbOk,
       dbError: dbErrMsg || undefined,
       api: apiOk,

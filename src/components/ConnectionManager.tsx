@@ -104,15 +104,21 @@ const connTranslations = {
     detectDbBtn: "شناسایی اطلاعات دیتابیس (Detect DB Info)",
     detectingDb: "در حال شناسایی دیتابیس...",
     detectDbNotice: "اتصال SSH به سرور هدف و استخراج خودکار DB Host, DB Port, DB Name, DB Username و DB Password از فایل homeserver.yaml.",
+    detectDbDistributedNotice: "در حالت توزیع‌شده، ابتدا سرور دیتابیس PostgreSQL بررسی شده و سپس تنظیمات ساینپس برای استخراج رمز عبور و نام دیتابیس آنالیز می‌شود.",
     detectDbSuccess: "مشخصات دیتابیس با موفقیت از سرور هدف استخراج و در فیلدهای زیر درج شد!",
     detectDbMissingSSH: "لطفاً ابتدا آدرس سرور (Host)، پورت، نام کاربری SSH و رمز عبور یا کلید خصوصی را وارد نمایید.",
+    detectDbMissingDistributedSSH: "لطفاً ابتدا مشخصات SSH سرور دیتابیس PostgreSQL یا سرور ساینپس را وارد نمایید.",
     detectDbFailed: "خطا در شناسایی اطلاعات دیتابیس:",
     detectDbBadge: "استخراج خودکار از سرور ساینپس",
     testAllNodes: "تست اتصال سراسری خوشه",
     clusterTopology: "توپولوژی معماری خوشه",
     synapseServer: "سرور ساینپس",
     databaseServer: "سرور دیتابیس",
-    elementServer: "سرور المنت وب"
+    elementServer: "سرور المنت وب",
+    nodeSshOk: "SSH متصل",
+    nodeSshFail: "خطای SSH",
+    clusterSyncOk: "ارتباط تمام نودهای خوشه و سرویس‌ها با موفقیت تأیید شد.",
+    clusterSyncFail: "خطا در ارتباط با برخی نودها یا سرویس‌های خوشه."
   },
   en: {
     pageTitle: "Server Connections",
@@ -168,22 +174,28 @@ const connTranslations = {
     authMethod: "Auth Method:",
     sshPrivateKey: "SSH Private Key",
     passwordCredentials: "Password Credentials",
-    synapsePostgres: "Synapse Postgres:",
+    synapsePostgres: "Synapse PostgreSQL:",
     testSync: "Test Sync",
     testing: "Testing...",
     connectedBadge: "Connected",
     detectDbBtn: "Detect DB Info",
-    detectingDb: "Detecting DB Info...",
-    detectDbNotice: "Connects via SSH to the Synapse server and automatically extracts DB Host, Port, Name, Username, and Password from homeserver.yaml.",
-    detectDbSuccess: "Database parameters successfully detected from target server and populated into the form!",
-    detectDbMissingSSH: "Please enter SSH Host, Port, Username, and Password or Private Key first.",
-    detectDbFailed: "Failed to detect database information:",
-    detectDbBadge: "Auto-extract from Synapse Node",
-    testAllNodes: "Test Full Cluster Connectivity",
-    clusterTopology: "Cluster Topology Overview",
-    synapseServer: "Synapse Node",
-    databaseServer: "Postgres Node",
-    elementServer: "Element Web Node"
+    detectingDb: "Detecting Database...",
+    detectDbNotice: "SSH to target server and extract DB Host, DB Port, DB Name, DB User and DB Password automatically from homeserver.yaml.",
+    detectDbDistributedNotice: "In distributed cluster mode, PostgreSQL DB Node is checked first, followed by Synapse configuration analysis for password & credentials.",
+    detectDbSuccess: "Database parameters successfully detected and filled in fields below!",
+    detectDbMissingSSH: "Please enter SSH Host, Port, and Username first.",
+    detectDbMissingDistributedSSH: "Please enter SSH details for the PostgreSQL DB Node or Synapse Node first.",
+    detectDbFailed: "Failed to detect database parameters:",
+    detectDbBadge: "Auto-extracted from Synapse",
+    testAllNodes: "Test All Cluster Nodes",
+    clusterTopology: "Cluster Architecture Topology",
+    synapseServer: "Synapse Server",
+    databaseServer: "Database Server",
+    elementServer: "Element Web Server",
+    nodeSshOk: "SSH OK",
+    nodeSshFail: "SSH Error",
+    clusterSyncOk: "All cluster nodes and services verified successfully.",
+    clusterSyncFail: "Some cluster nodes or services failed verification."
   },
   es: {
     pageTitle: "Conexiones de Servidor",
@@ -609,32 +621,85 @@ export default function ConnectionManager({
   const handleDetectDbInfo = async () => {
     setDbDetectionMessage(null);
     
-    if (!host || !host.trim()) {
-      setDbDetectionMessage({
-        type: 'error',
-        text: (t as any).detectDbMissingSSH || "Please enter SSH Host, Port, and Username first."
-      });
-      return;
-    }
+    if (deploymentMode === 'distributed') {
+      const hasDbCredentials = !!dbNodeHost?.trim();
+      const hasSynapseCredentials = !!host?.trim();
+      if (!hasDbCredentials && !hasSynapseCredentials) {
+        setDbDetectionMessage({
+          type: 'error',
+          text: (t as any).detectDbMissingDistributedSSH || "Please enter the SSH details for PostgreSQL DB Node or Synapse Node first."
+        });
+        return;
+      }
+    } else {
+      if (!host || !host.trim()) {
+        setDbDetectionMessage({
+          type: 'error',
+          text: (t as any).detectDbMissingSSH || "Please enter SSH Host, Port, and Username first."
+        });
+        return;
+      }
 
-    if (authType === 'password' && !password) {
-      setDbDetectionMessage({
-        type: 'error',
-        text: (t as any).detectDbMissingSSH || "Please enter the SSH password first."
-      });
-      return;
-    }
+      if (authType === 'password' && !password) {
+        setDbDetectionMessage({
+          type: 'error',
+          text: (t as any).detectDbMissingSSH || "Please enter the SSH password first."
+        });
+        return;
+      }
 
-    if (authType === 'key' && !privateKey) {
-      setDbDetectionMessage({
-        type: 'error',
-        text: (t as any).detectDbMissingSSH || "Please enter the SSH Private Key first."
-      });
-      return;
+      if (authType === 'key' && !privateKey) {
+        setDbDetectionMessage({
+          type: 'error',
+          text: (t as any).detectDbMissingSSH || "Please enter the SSH Private Key first."
+        });
+        return;
+      }
     }
 
     setIsDetectingDb(true);
     try {
+      const synapseNode: ServerNodeConfig = {
+        host: host.trim(),
+        port: Number(port) || 22,
+        username: username.trim(),
+        authType,
+        password: authType === 'password' ? password : '',
+        privateKey: authType === 'key' ? privateKey : '',
+        servicePort: Number(servicePort) || 8008,
+        configPath: homeserverYamlPath
+      };
+
+      let databaseNode: ServerNodeConfig | undefined = undefined;
+      if (deploymentMode === 'distributed') {
+        databaseNode = {
+          host: dbNodeHost.trim() || dbHost.trim() || host.trim(),
+          port: Number(dbNodePort) || 22,
+          username: dbNodeUsername.trim() || 'root',
+          authType: dbNodeAuthType,
+          password: dbNodeAuthType === 'password' ? dbNodePassword : '',
+          privateKey: dbNodeAuthType === 'key' ? dbNodePrivateKey : '',
+          servicePort: Number(dbNodeServicePort) || 5432,
+          dbName,
+          dbUser,
+          dbPass
+        };
+      }
+
+      let elementNode: ServerNodeConfig | undefined = undefined;
+      if (deploymentMode === 'distributed') {
+        elementNode = {
+          host: elemNodeHost.trim() || host.trim(),
+          port: Number(elemNodePort) || 22,
+          username: elemNodeUsername.trim() || 'root',
+          authType: elemNodeAuthType,
+          password: elemNodeAuthType === 'password' ? elemNodePassword : '',
+          privateKey: elemNodeAuthType === 'key' ? elemNodePrivateKey : '',
+          servicePort: Number(elemNodeServicePort) || 80,
+          webPath: elemNodeWebPath
+        };
+      }
+
       const res = await fetch('/api/connections/detect-db', {
         method: 'POST',
         headers: {
@@ -642,15 +707,24 @@ export default function ConnectionManager({
           'Authorization': `Bearer ${authToken}`
         },
         body: JSON.stringify({
+          id: editingId || undefined,
+          deploymentMode,
           host: host.trim(),
           port: port || 22,
           username: username.trim(),
           authType,
           password: password || undefined,
           privateKey: privateKey || undefined,
+          synapseNode,
+          databaseNode,
+          elementNode,
+          dbHost: deploymentMode === 'distributed' && dbNodeHost ? dbNodeHost.trim() : (dbHost.trim() || 'localhost'),
+          dbPort,
+          dbName,
+          dbUser,
+          dbPass,
           homeserverYamlPath: homeserverYamlPath.trim() || undefined,
-          configPath: configPath.trim() || undefined,
-          id: editingId || undefined
+          configPath: configPath.trim() || undefined
         })
       });
 
@@ -667,10 +741,13 @@ export default function ConnectionManager({
           setDbNodeHost(data.dbHost);
         }
         setShowAdvanced(true);
+        const nodeDetailList = Array.isArray(data.checkedNodes) 
+          ? ` (${data.checkedNodes.map((n: any) => `${n.role}: ${n.ok ? '✓' : '✗'}`).join(' • ')})`
+          : '';
         setDbDetectionMessage({
           type: 'success',
           text: (t as any).detectDbSuccess || "Database parameters successfully detected!",
-          details: `${data.dbUser}@${data.dbHost}:${data.dbPort}/${data.dbName} (${data.source || 'homeserver.yaml'})`
+          details: `${data.dbUser}@${data.dbHost}:${data.dbPort}/${data.dbName} [Source: ${data.source || 'homeserver.yaml'}]${data.dbVerified ? ' • Live PostgreSQL Verified ✓' : ''}${nodeDetailList}`
         });
       } else {
         setDbDetectionMessage({
@@ -2014,7 +2091,7 @@ export default function ConnectionManager({
 
           {/* Test Feedback */}
           {formTestResult && (
-            <div className={`p-4 rounded-xl border text-xs space-y-2 ${
+            <div className={`p-4 rounded-xl border text-xs space-y-3 ${
               formTestResult.success 
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' 
                 : 'bg-rose-500/10 border-rose-500/20 text-rose-300'
@@ -2030,16 +2107,45 @@ export default function ConnectionManager({
               </div>
               
               {formTestResult.clusterNodes && formTestResult.clusterNodes.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-white/10">
-                  {formTestResult.clusterNodes.map(cn => (
-                    <div key={cn.role} className="p-2 rounded-lg bg-black/20 border border-white/5 flex items-center justify-between">
-                      <span className="font-semibold uppercase text-[10px]">{cn.role} Node:</span>
-                      <span className={`text-[10px] font-bold flex items-center gap-1 ${cn.ssh ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {cn.ssh ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
-                        {cn.ssh ? 'Online' : 'Failed'}
-                      </span>
-                    </div>
-                  ))}
+                <div className="space-y-1.5 pt-2 border-t border-white/10">
+                  <div className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                    <span>Cluster Nodes Verification:</span>
+                    <span className={formTestResult.clusterNodes.every(n => n.ssh) ? 'text-emerald-400' : 'text-rose-400'}>
+                      {formTestResult.clusterNodes.filter(n => n.ssh).length} / {formTestResult.clusterNodes.length} Nodes Online
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {formTestResult.clusterNodes.map(cn => (
+                      <div key={cn.role} className={`p-2.5 rounded-xl border flex flex-col gap-1.5 ${
+                        cn.ssh && (cn.service === undefined || cn.service)
+                          ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'
+                          : 'bg-rose-500/10 border-rose-500/25 text-rose-200'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold uppercase text-[10px] tracking-wider opacity-90">{cn.name || `${cn.role} Node`}</span>
+                          <span className={`text-[10px] font-bold flex items-center gap-1 ${cn.ssh ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {cn.ssh ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                            {cn.ssh ? 'SSH OK' : 'SSH Failed'}
+                          </span>
+                        </div>
+                        <div className="font-mono text-[10px] opacity-75 truncate">{cn.host}</div>
+                        {cn.serviceName && (
+                          <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[10px]">
+                            <span className="opacity-80 truncate">{cn.serviceName}:</span>
+                            <span className={`font-bold flex items-center gap-0.5 shrink-0 ${cn.service ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {cn.service ? <Check className="w-2.5 h-2.5" /> : <AlertCircle className="w-2.5 h-2.5" />}
+                              {cn.service ? 'Active' : 'Unreachable'}
+                            </span>
+                          </div>
+                        )}
+                        {cn.error && !cn.ssh && (
+                          <div className="text-[9px] text-rose-300 font-mono opacity-90 leading-tight">
+                            {cn.error}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -2274,26 +2380,62 @@ export default function ConnectionManager({
 
                     {/* Test Feedback Badges */}
                     {testResult && (
-                      <div className="flex flex-col items-end text-[10px]">
-                        <div className="flex items-center gap-1 font-bold">
-                          {testResult.ssh ? (
-                            <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> SSH</span>
-                          ) : (
-                            <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> SSH</span>
-                          )}
-                          <span className={isLightMode ? 'text-slate-300' : 'text-slate-500'}>|</span>
-                          {testResult.db ? (
-                            <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> Postgres</span>
-                          ) : (
-                            <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> Postgres</span>
-                          )}
-                          <span className={isLightMode ? 'text-slate-300' : 'text-slate-500'}>|</span>
-                          {testResult.api ? (
-                            <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> Matrix API</span>
-                          ) : (
-                            <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> Matrix API</span>
-                          )}
-                        </div>
+                      <div className="flex flex-col items-end text-[10px] w-full">
+                        {testResult.clusterNodes && testResult.clusterNodes.length > 0 ? (
+                          <div className={`p-2 rounded-lg border w-full space-y-1.5 ${
+                            testResult.success
+                              ? isLightMode ? 'bg-emerald-50/80 border-emerald-200 text-emerald-800' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                              : isLightMode ? 'bg-amber-50/80 border-amber-200 text-amber-800' : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                          }`}>
+                            <div className="flex items-center justify-between text-[10px] font-bold">
+                              <span>Cluster Multi-Node Test:</span>
+                              <span className={testResult.success ? 'text-emerald-500' : 'text-amber-500'}>
+                                {testResult.clusterNodes.filter((n: any) => n.ssh).length} / {testResult.clusterNodes.length} Online
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1">
+                              {testResult.clusterNodes.map((cn: any) => (
+                                <div key={cn.role} className={`p-1 rounded text-[9px] border flex flex-col gap-0.5 ${
+                                  cn.ssh && (cn.service === undefined || cn.service)
+                                    ? isLightMode ? 'bg-white border-emerald-300 text-emerald-700' : 'bg-black/30 border-emerald-500/30 text-emerald-300'
+                                    : isLightMode ? 'bg-white border-rose-300 text-rose-700' : 'bg-black/30 border-rose-500/30 text-rose-300'
+                                }`}>
+                                  <div className="font-extrabold uppercase text-[8px] truncate">{cn.role}</div>
+                                  <div className="flex items-center gap-0.5 font-bold">
+                                    {cn.ssh ? <Check className="w-2.5 h-2.5 text-emerald-500" /> : <AlertCircle className="w-2.5 h-2.5 text-rose-500" />}
+                                    <span>{cn.ssh ? 'SSH OK' : 'SSH Fail'}</span>
+                                  </div>
+                                  {cn.serviceName && (
+                                    <div className="flex items-center gap-0.5 text-[8px] opacity-85">
+                                      {cn.service ? <Check className="w-2 h-2 text-emerald-500" /> : <AlertCircle className="w-2 h-2 text-rose-500" />}
+                                      <span className="truncate">{cn.service ? 'Service' : 'Err'}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 font-bold">
+                            {testResult.ssh ? (
+                              <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> SSH</span>
+                            ) : (
+                              <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> SSH</span>
+                            )}
+                            <span className={isLightMode ? 'text-slate-300' : 'text-slate-500'}>|</span>
+                            {testResult.db ? (
+                              <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> Postgres</span>
+                            ) : (
+                              <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> Postgres</span>
+                            )}
+                            <span className={isLightMode ? 'text-slate-300' : 'text-slate-500'}>|</span>
+                            {testResult.api ? (
+                              <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> Matrix API</span>
+                            ) : (
+                              <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> Matrix API</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
 
