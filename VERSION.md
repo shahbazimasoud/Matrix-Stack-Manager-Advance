@@ -15,9 +15,15 @@
 
 ---
 
-## Current Panel Version: **v2.40.0** (Released: 2026-09-02)
+## Current Panel Version: **v2.40.1** (Released: 2026-09-02)
 
 ### Changelog History
+
+#### **v2.40.1** - 2026-09-02
+- **Compact Cluster Test Badges & Preserved Action Layout**:
+  - **Optimized Test Feedback Badges**: Restructured cluster multi-node test results in connection cards into ultra-compact, proportional status chips without shifting action button sizes.
+  - **Reliable Element Web Verification**: Broadened Element web directory and server verification to eliminate false-negative service status.
+  - **Polished Connected & Status Indicators**: Added refined glowing pulse indicators and unified status chip styling across light and dark themes.
 
 #### **v2.40.0** - 2026-09-02
 - **Multi-Server DB Auto-Detection & Distributed Cluster Connection Diagnostics**:

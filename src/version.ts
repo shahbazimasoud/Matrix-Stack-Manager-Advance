@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.40.0";
+export const PANEL_VERSION = "2.40.1";
 export const PANEL_BUILD_DATE = "2026-09-02";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.40.1",
+    date: "2026-09-02",
+    title: "Compact Cluster Test Badges & Preserved Action Layout",
+    changes: [
+      "Optimized Test Feedback Badges: Restructured cluster multi-node test results in connection cards into ultra-compact, proportional status chips without shifting action button sizes.",
+      "Reliable Element Web Verification: Broadened Element web directory and server verification to eliminate false-negative service status.",
+      "Polished Connected & Status Indicators: Added refined glowing pulse indicators and unified status chip styling across light and dark themes."
+    ]
+  },
   {
     version: "2.40.0",
     date: "2026-09-02",

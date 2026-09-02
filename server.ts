@@ -4081,10 +4081,17 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
       if (elemSshOk) {
         try {
           const elemPort = Number(profile.elementNode?.servicePort) || 80;
-          const checkCmd = `test -d /var/www/element || test -f /var/www/element/config.json || test -f /var/www/element/index.html || systemctl is-active nginx 2>/dev/null || curl -s -I http://127.0.0.1:${elemPort} 2>/dev/null || true`;
+          const webPath = profile.elementNode?.webPath || "/var/www/element";
+          const checkCmd = `test -d "${webPath}" || test -f "${webPath}/config.json" || test -f "${webPath}/index.html" || systemctl is-active --quiet nginx 2>/dev/null || systemctl is-active --quiet apache2 2>/dev/null || systemctl is-active --quiet caddy 2>/dev/null || curl -s -f -I -m 2 http://127.0.0.1:${elemPort} >/dev/null 2>&1 && echo "__ELEM_WEB_OK__" || true`;
           const elemRes = await executeSSHCommand(profile, checkCmd, "element");
-          if (elemRes.includes("HTTP/") || elemRes.includes("active") || elemRes.trim().length === 0) {
+          if (elemRes.includes("__ELEM_WEB_OK__") || elemRes.includes("active") || elemRes.includes("HTTP/")) {
             elemWebOk = true;
+          } else {
+            // Secondary check: verify if web directory exists
+            const dirCheck = await executeSSHCommand(profile, `test -d /var/www/element || test -d /usr/share/nginx/html || test -f /var/www/element/config.json && echo "__DIR_OK__" || true`, "element");
+            if (dirCheck.includes("__DIR_OK__")) {
+              elemWebOk = true;
+            }
           }
         } catch (e: any) {
           elemWebErr = e.message;
@@ -4094,7 +4101,7 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
       // Add to clusterNodes list
       clusterNodesTest.push({
         role: "synapse",
-        name: "Synapse Core Node",
+        name: "Synapse",
         host: synHost,
         ssh: synSshOk,
         error: !synSshOk ? synSshErr : undefined
@@ -4102,7 +4109,7 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
 
       clusterNodesTest.push({
         role: "database",
-        name: "PostgreSQL DB Node",
+        name: "PostgreSQL",
         host: dbHost,
         ssh: dbSshOk,
         error: !dbSshOk ? dbSshErr : undefined
@@ -4110,11 +4117,11 @@ app.post("/api/connections/test", authenticateToken, checkPermission(["Owner", "
 
       clusterNodesTest.push({
         role: "element",
-        name: "Element Web Node",
+        name: "Element Web",
         host: elemHost,
         ssh: elemSshOk,
         service: elemWebOk,
-        serviceName: `Element Web / HTTP (:${Number(profile.elementNode?.servicePort) || 80})`,
+        serviceName: `Element (:${Number(profile.elementNode?.servicePort) || 80})`,
         error: !elemSshOk ? elemSshErr : !elemWebOk && elemWebErr ? elemWebErr : undefined
       });
     }

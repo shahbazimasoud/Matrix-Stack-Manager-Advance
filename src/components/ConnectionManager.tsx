@@ -2328,122 +2328,159 @@ export default function ConnectionManager({
                     </div>
                   </div>
 
-                  {/* Footer Actions */}
-                  <div className={`mt-6 pt-4 border-t flex items-center justify-between gap-2 transition-colors duration-300 ${isLightMode ? 'border-slate-100' : 'border-white/5'}`}>
-                    <div className="flex items-center gap-2">
-                      {!isLocal && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleTestProfile(profile, e)}
-                          disabled={isTesting}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-                            isLightMode
-                              ? 'bg-slate-100 hover:bg-slate-200/80 border-slate-200 text-slate-700'
-                              : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10 text-slate-300'
-                          }`}
-                        >
-                          <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin text-teal-400' : ''}`} />
-                          {isTesting ? t.testing : t.testSync}
-                        </button>
-                      )}
+                  {/* Footer Actions & Test Badges */}
+                  <div className={`mt-6 pt-3.5 border-t space-y-2.5 transition-colors duration-300 ${isLightMode ? 'border-slate-100' : 'border-white/5'}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {!isLocal && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleTestProfile(profile, e)}
+                            disabled={isTesting}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-all shadow-sm ${
+                              isLightMode
+                                ? 'bg-slate-100 hover:bg-slate-200/80 border-slate-200 text-slate-700'
+                                : 'bg-white/5 border-white/10 hover:bg-white/10 text-slate-300'
+                            }`}
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin text-teal-400' : ''}`} />
+                            {isTesting ? t.testing : t.testSync}
+                          </button>
+                        )}
 
-                      {!isLocal && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleEditProfile(profile, e)}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            isLightMode
-                              ? 'hover:bg-slate-100 text-slate-500 hover:text-teal-600'
-                              : 'hover:bg-teal-500/10 text-slate-400 hover:text-teal-400'
-                          }`}
-                          title="Edit Connection / Cluster"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
-                      )}
+                        {!isLocal && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleEditProfile(profile, e)}
+                            className={`p-1.5 rounded-lg border transition-colors ${
+                              isLightMode
+                                ? 'bg-white border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-teal-600'
+                                : 'bg-white/5 border-white/5 hover:bg-teal-500/10 text-slate-400 hover:text-teal-400'
+                            }`}
+                            title="Edit Connection / Cluster"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                        )}
 
-                      {!isLocal && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleDeleteProfile(profile.id, e)}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            isLightMode
-                              ? 'hover:bg-red-50 text-slate-500 hover:text-red-600 hover:bg-red-500/10'
-                              : 'hover:bg-red-500/10 text-slate-400 hover:text-red-400'
-                          }`}
-                          title="Delete Connection"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                        {!isLocal && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteProfile(profile.id, e)}
+                            className={`p-1.5 rounded-lg border transition-colors ${
+                              isLightMode
+                                ? 'bg-white border-slate-200 hover:bg-red-50 text-slate-500 hover:text-red-600'
+                                : 'bg-white/5 border-white/5 hover:bg-red-500/10 text-slate-400 hover:text-red-400'
+                            }`}
+                            title="Delete Connection"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isActive && (
+                          <span className={`text-[11px] font-bold flex items-center gap-1.5 px-2.5 py-1 rounded-full border ${
+                            isLightMode ? 'bg-teal-50 border-teal-200 text-teal-700' : 'bg-teal-500/10 border-teal-500/20 text-teal-400'
+                          }`}>
+                            <span className={`w-2 h-2 rounded-full ${isLightMode ? 'bg-teal-600' : 'bg-teal-400'} animate-pulse`} />
+                            {t.connectedBadge}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Test Feedback Badges */}
+                    {/* Test Feedback Compact Chips */}
                     {testResult && (
-                      <div className="flex flex-col items-end text-[10px] w-full">
+                      <div className="pt-1">
                         {testResult.clusterNodes && testResult.clusterNodes.length > 0 ? (
-                          <div className={`p-2 rounded-lg border w-full space-y-1.5 ${
+                          <div className={`p-2 rounded-xl border space-y-1.5 transition-all ${
                             testResult.success
-                              ? isLightMode ? 'bg-emerald-50/80 border-emerald-200 text-emerald-800' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
-                              : isLightMode ? 'bg-amber-50/80 border-amber-200 text-amber-800' : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                              ? isLightMode ? 'bg-emerald-50/60 border-emerald-200/80' : 'bg-emerald-950/20 border-emerald-500/20'
+                              : isLightMode ? 'bg-amber-50/60 border-amber-200/80' : 'bg-amber-950/20 border-amber-500/20'
                           }`}>
-                            <div className="flex items-center justify-between text-[10px] font-bold">
-                              <span>Cluster Multi-Node Test:</span>
-                              <span className={testResult.success ? 'text-emerald-500' : 'text-amber-500'}>
+                            <div className="flex items-center justify-between text-[10px] font-bold px-0.5">
+                              <span className={`flex items-center gap-1 ${
+                                testResult.success 
+                                  ? isLightMode ? 'text-emerald-700' : 'text-emerald-400'
+                                  : isLightMode ? 'text-amber-700' : 'text-amber-400'
+                              }`}>
+                                {testResult.success ? <CheckCircle2 className="w-3 h-3 text-emerald-500" /> : <AlertCircle className="w-3 h-3 text-amber-500" />}
+                                Cluster Test:
+                              </span>
+                              <span className={`font-mono text-[9px] px-1.5 py-0.5 rounded-md ${
+                                testResult.success 
+                                  ? isLightMode ? 'bg-emerald-100/80 text-emerald-800 font-bold' : 'bg-emerald-500/20 text-emerald-300'
+                                  : isLightMode ? 'bg-amber-100/80 text-amber-800 font-bold' : 'bg-amber-500/20 text-amber-300'
+                              }`}>
                                 {testResult.clusterNodes.filter((n: any) => n.ssh).length} / {testResult.clusterNodes.length} Online
                               </span>
                             </div>
-                            <div className="grid grid-cols-3 gap-1">
-                              {testResult.clusterNodes.map((cn: any) => (
-                                <div key={cn.role} className={`p-1 rounded text-[9px] border flex flex-col gap-0.5 ${
-                                  cn.ssh && (cn.service === undefined || cn.service)
-                                    ? isLightMode ? 'bg-white border-emerald-300 text-emerald-700' : 'bg-black/30 border-emerald-500/30 text-emerald-300'
-                                    : isLightMode ? 'bg-white border-rose-300 text-rose-700' : 'bg-black/30 border-rose-500/30 text-rose-300'
-                                }`}>
-                                  <div className="font-extrabold uppercase text-[8px] truncate">{cn.role}</div>
-                                  <div className="flex items-center gap-0.5 font-bold">
-                                    {cn.ssh ? <Check className="w-2.5 h-2.5 text-emerald-500" /> : <AlertCircle className="w-2.5 h-2.5 text-rose-500" />}
-                                    <span>{cn.ssh ? 'SSH OK' : 'SSH Fail'}</span>
-                                  </div>
-                                  {cn.serviceName && (
-                                    <div className="flex items-center gap-0.5 text-[8px] opacity-85">
-                                      {cn.service ? <Check className="w-2 h-2 text-emerald-500" /> : <AlertCircle className="w-2 h-2 text-rose-500" />}
-                                      <span className="truncate">{cn.service ? 'Service' : 'Err'}</span>
+
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {testResult.clusterNodes.map((cn: any) => {
+                                const isNodeOk = cn.ssh && (cn.service === undefined || cn.service);
+                                return (
+                                  <div
+                                    key={cn.role}
+                                    className={`px-1.5 py-1 rounded-lg border flex flex-col justify-center min-w-0 transition-all ${
+                                      isNodeOk
+                                        ? isLightMode 
+                                          ? 'bg-white/90 border-emerald-200/70 text-emerald-800 shadow-xs' 
+                                          : 'bg-black/30 border-emerald-500/25 text-emerald-300'
+                                        : isLightMode 
+                                          ? 'bg-white/90 border-rose-200/70 text-rose-800 shadow-xs' 
+                                          : 'bg-black/30 border-rose-500/25 text-rose-300'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-1 leading-none">
+                                      <span className="font-bold text-[9px] uppercase tracking-wide truncate opacity-90">{cn.role}</span>
+                                      {cn.ssh ? (
+                                        <Check className="w-2.5 h-2.5 text-emerald-500 shrink-0" />
+                                      ) : (
+                                        <AlertCircle className="w-2.5 h-2.5 text-rose-500 shrink-0" />
+                                      )}
                                     </div>
-                                  )}
-                                </div>
-                              ))}
+                                    <div className="flex items-center justify-between text-[8px] font-mono mt-0.5 leading-none opacity-80">
+                                      <span>SSH:</span>
+                                      <span className={cn.ssh ? 'text-emerald-500 font-semibold' : 'text-rose-500 font-semibold'}>
+                                        {cn.ssh ? 'OK' : 'Fail'}
+                                      </span>
+                                    </div>
+                                    {cn.service !== undefined && (
+                                      <div className="flex items-center justify-between text-[8px] font-mono mt-0.5 leading-none opacity-80">
+                                        <span>Svc:</span>
+                                        <span className={cn.service ? 'text-emerald-500 font-semibold' : 'text-amber-500 font-semibold'}>
+                                          {cn.service ? 'OK' : 'Err'}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1 font-bold">
-                            {testResult.ssh ? (
-                              <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> SSH</span>
-                            ) : (
-                              <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> SSH</span>
-                            )}
-                            <span className={isLightMode ? 'text-slate-300' : 'text-slate-500'}>|</span>
-                            {testResult.db ? (
-                              <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> Postgres</span>
-                            ) : (
-                              <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> Postgres</span>
-                            )}
-                            <span className={isLightMode ? 'text-slate-300' : 'text-slate-500'}>|</span>
-                            {testResult.api ? (
-                              <span className={`${isLightMode ? 'text-emerald-600' : 'text-emerald-400'} flex items-center gap-0.5`}><CheckCircle2 className="w-3 h-3" /> Matrix API</span>
-                            ) : (
-                              <span className={`${isLightMode ? 'text-rose-600' : 'text-rose-400'} flex items-center gap-0.5`}><AlertCircle className="w-3 h-3" /> Matrix API</span>
-                            )}
+                          <div className={`p-1.5 px-2.5 rounded-lg border flex items-center justify-between text-[10px] font-mono ${
+                            testResult.success
+                              ? isLightMode ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                              : isLightMode ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-rose-500/10 border-rose-500/20 text-rose-300'
+                          }`}>
+                            <div className="flex items-center gap-1.5 font-bold">
+                              {testResult.success ? <CheckCircle2 className="w-3 h-3 text-emerald-500" /> : <AlertCircle className="w-3 h-3 text-rose-500" />}
+                              <span>{testResult.success ? 'Sync OK' : 'Sync Issue'}</span>
+                            </div>
+                            <div className="flex items-center gap-1 text-[9px]">
+                              <span className={testResult.ssh ? 'text-emerald-600' : 'text-rose-600'}>SSH {testResult.ssh ? '✓' : '✗'}</span>
+                              <span className="opacity-40">|</span>
+                              <span className={testResult.db ? 'text-emerald-600' : 'text-rose-600'}>DB {testResult.db ? '✓' : '✗'}</span>
+                              <span className="opacity-40">|</span>
+                              <span className={testResult.api ? 'text-emerald-600' : 'text-rose-600'}>API {testResult.api ? '✓' : '✗'}</span>
+                            </div>
                           </div>
                         )}
                       </div>
-                    )}
-
-                    {isActive && (
-                      <span className={`text-[11px] font-bold flex items-center gap-1.5 ${isLightMode ? 'text-teal-600' : 'text-teal-400'}`}>
-                        {t.connectedBadge}
-                        <span className={`w-2 h-2 rounded-full animate-ping ${isLightMode ? 'bg-teal-600' : 'bg-teal-400'}`} />
-                      </span>
                     )}
                   </div>
                 </div>
