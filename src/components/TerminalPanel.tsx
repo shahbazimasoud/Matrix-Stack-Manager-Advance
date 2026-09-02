@@ -28,9 +28,9 @@ interface TerminalPanelProps {
   onLogout?: () => void;
 }
 
-const UPDATE_UNINSTALL_CMD = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | sudo bash";
-const UPDATE_SETUP_CMD = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | sudo bash";
-const OFFICIAL_REPO_URL = "https://github.com/shahbazimasoud/Matrix-Stack-Manager.git";
+const UPDATE_UNINSTALL_CMD = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/uninstall-panel.sh | sudo bash";
+const UPDATE_SETUP_CMD = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/setup-panel.sh | sudo bash";
+const OFFICIAL_REPO_URL = "https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git";
 
 const terminalTranslations: Record<string, any> = {
   en: {
@@ -1616,7 +1616,7 @@ export default function TerminalPanel({
 
                   <div className="flex items-center gap-2">
                     <a
-                      href="https://github.com/shahbazimasoud/Matrix-Stack-Manager"
+                      href="https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-sm"

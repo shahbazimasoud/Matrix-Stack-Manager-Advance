@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.39.0";
+export const PANEL_VERSION = "2.39.1";
 export const PANEL_BUILD_DATE = "2026-09-02";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.39.1",
+    date: "2026-09-02",
+    title: "Official Repository & Interactive Installer Migration to Matrix-Stack-Manager-Advance",
+    changes: [
+      "Repository URL Alignment: Updated all installation (curl setup-panel.sh), uninstallation (curl uninstall-panel.sh), and git clone instructions in README.md and documentation.",
+      "Installer & Uninstaller Synchronization: Configured setup-panel.sh and uninstall-panel.sh to directly pull from and reference Matrix-Stack-Manager-Advance.",
+      "System Updater & GitHub Integration: Updated live commit inspection, system update pipeline, and GitHub UI links across the entire frontend and backend."
+    ]
+  },
   {
     version: "2.39.0",
     date: "2026-09-02",

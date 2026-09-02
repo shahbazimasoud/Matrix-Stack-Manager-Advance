@@ -14383,21 +14383,21 @@ async function loadServerParametersFromRemoteServer(): Promise<{
 }
 
 // System Update - Check
-// System Update - Check (Targeted to official repo: https://github.com/shahbazimasoud/Matrix-Stack-Manager.git)
+// System Update - Check (Targeted to official repo: https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git)
 app.get("/api/system/update/check", authenticateToken, checkPermission(["Owner", "Super Admin"]), async (req, res) => {
   try {
-    const OFFICIAL_REPO = "https://github.com/shahbazimasoud/Matrix-Stack-Manager.git";
-    const GITHUB_API_COMMITS = "https://api.github.com/repos/shahbazimasoud/Matrix-Stack-Manager/commits?per_page=10";
-    const GITHUB_RAW_VERSION = "https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/src/version.ts";
+    const OFFICIAL_REPO = "https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git";
+    const GITHUB_API_COMMITS = "https://api.github.com/repos/shahbazimasoud/Matrix-Stack-Manager-Advance/commits?per_page=10";
+    const GITHUB_RAW_VERSION = "https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/src/version.ts";
 
     // 0. Ensure origin remote points to official repository
     await new Promise((resolve) => {
-      exec("git remote set-url origin https://github.com/shahbazimasoud/Matrix-Stack-Manager.git", () => resolve(true));
+      exec("git remote set-url origin https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git", () => resolve(true));
     });
 
     // 1. Fetch from git origin explicitly with all branches/tags
     await new Promise((resolve) => {
-      exec("git fetch origin master || git fetch --all --tags --prune || git fetch https://github.com/shahbazimasoud/Matrix-Stack-Manager.git master", () => {
+      exec("git fetch origin master || git fetch --all --tags --prune || git fetch https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git master", () => {
         resolve(true);
       });
     });
@@ -16072,7 +16072,7 @@ app.post("/api/system/update/apply", authenticateToken, checkPermission(["Owner"
   try {
     const logs: string[] = [];
     logs.push("# Starting Matrix Panel full system update workflow...");
-    logs.push("# Target Official Repository: https://github.com/shahbazimasoud/Matrix-Stack-Manager.git");
+    logs.push("# Target Official Repository: https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git");
 
     // 0. Backup All Critical Data (Panel Users, Passwords, Access Levels & Server Connections)
     const backupDir = "/etc/matrix-manager-backup";
@@ -16102,10 +16102,10 @@ app.post("/api/system/update/apply", authenticateToken, checkPermission(["Owner"
 
     // Step 1: Execute Uninstall script from official repository (with --preserve-data flag)
     logs.push("# Step 1/2: Executing uninstall cleanup script from repository...");
-    logs.push("> curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | sudo bash");
+    logs.push("> curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/uninstall-panel.sh | sudo bash");
     
     await new Promise((resolve) => {
-      const uninstallCmd = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | bash -s -- --preserve-data --non-interactive || true";
+      const uninstallCmd = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/uninstall-panel.sh | bash -s -- --preserve-data --non-interactive || true";
       exec(uninstallCmd, { env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" } }, (err, stdout, stderr) => {
         if (stdout) {
           const lines = stdout.trim().split("\n");
@@ -16122,10 +16122,10 @@ app.post("/api/system/update/apply", authenticateToken, checkPermission(["Owner"
 
     // Step 2: Execute Setup installer script from official repository
     logs.push("# Step 2/2: Executing latest panel installer from repository...");
-    logs.push("> curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | sudo bash");
+    logs.push("> curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/setup-panel.sh | sudo bash");
     
     await new Promise((resolve) => {
-      const setupCmd = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | bash -s -- --update || bash setup-panel.sh --update || git pull origin master || true";
+      const setupCmd = "curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/setup-panel.sh | bash -s -- --update || bash setup-panel.sh --update || git pull origin master || true";
       exec(setupCmd, { env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" } }, (err, stdout, stderr) => {
         if (stdout) {
           const lines = stdout.trim().split("\n");
@@ -26905,20 +26905,20 @@ async function startServer() {
           
           if (cmd === 'update_interactive' || cmd === 'update_panel') {
             broadcastWS({ type: 'cmd_stdout', text: '>>> Initializing Interactive Panel Update Pipeline...' });
-            broadcastWS({ type: 'cmd_stdout', text: '>>> Target Repository: https://github.com/shahbazimasoud/Matrix-Stack-Manager.git' });
+            broadcastWS({ type: 'cmd_stdout', text: '>>> Target Repository: https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git' });
             broadcastWS({ type: 'cmd_stdout', text: '>>> [Step 1/2] Executing uninstaller cleanup with data backup...' });
-            broadcastWS({ type: 'cmd_stdout', text: '> curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | sudo bash' });
+            broadcastWS({ type: 'cmd_stdout', text: '> curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/uninstall-panel.sh | sudo bash' });
 
-            const proc1 = exec('curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | bash -s -- --preserve-data --non-interactive || true');
+            const proc1 = exec('curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/uninstall-panel.sh | bash -s -- --preserve-data --non-interactive || true');
             proc1.stdout?.on('data', (d) => broadcastWS({ type: 'cmd_stdout', text: d.toString() }));
             proc1.stderr?.on('data', (d) => broadcastWS({ type: 'cmd_stdout', text: d.toString() }));
             
             proc1.on('close', (code1) => {
               broadcastWS({ type: 'cmd_stdout', text: `>>> [Step 1/2] Cleanup script exited with code ${code1}.` });
               broadcastWS({ type: 'cmd_stdout', text: '>>> [Step 2/2] Executing latest panel installer...' });
-              broadcastWS({ type: 'cmd_stdout', text: '> curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | sudo bash' });
+              broadcastWS({ type: 'cmd_stdout', text: '> curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/setup-panel.sh | sudo bash' });
 
-              const proc2 = exec('curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | bash -s -- --update || bash setup-panel.sh --update || git pull origin master || true');
+              const proc2 = exec('curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/setup-panel.sh | bash -s -- --update || bash setup-panel.sh --update || git pull origin master || true');
               proc2.stdout?.on('data', (d) => broadcastWS({ type: 'cmd_stdout', text: d.toString() }));
               proc2.stderr?.on('data', (d) => broadcastWS({ type: 'cmd_stdout', text: d.toString() }));
 

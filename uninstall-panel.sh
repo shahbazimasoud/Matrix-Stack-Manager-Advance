@@ -31,7 +31,7 @@ cat << 'EOF'
   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═══╝  ╚══════╝╚═╝  ╚═══╝
 
         RAVEN MATRIX STACK MANAGER PANEL - VPS UNINSTALLER
-    Repository: https://github.com/shahbazimasoud/Matrix-Stack-Manager
+    Repository: https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance
     Developer: Masoud Shahbazi (https://www.linkedin.com/in/masoudshahbazi/)
 ======================================================================
 EOF

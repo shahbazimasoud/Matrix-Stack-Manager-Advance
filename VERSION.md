@@ -15,9 +15,15 @@
 
 ---
 
-## Current Panel Version: **v2.39.0** (Released: 2026-09-02)
+## Current Panel Version: **v2.39.1** (Released: 2026-09-02)
 
 ### Changelog History
+
+#### **v2.39.1** - 2026-09-02
+- **Official Repository & Interactive Installer Migration to Matrix-Stack-Manager-Advance**:
+  - **Repository URL Alignment**: Updated all installation (`curl setup-panel.sh`), uninstallation (`curl uninstall-panel.sh`), and `git clone` instructions in `README.md` and documentation to point to `Matrix-Stack-Manager-Advance`.
+  - **Installer & Uninstaller Synchronization**: Configured `setup-panel.sh` and `uninstall-panel.sh` to directly pull from and reference `Matrix-Stack-Manager-Advance`.
+  - **System Updater & GitHub Integration**: Updated live commit inspection, system update pipeline, and GitHub UI links across the entire frontend and backend.
 
 #### **v2.39.0** - 2026-09-02
 - **Distributed Multi-Server Architecture Support for Synapse, Database & Element**:

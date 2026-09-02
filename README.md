@@ -7,7 +7,7 @@
 [![Element Web](https://img.shields.io/badge/Element-Web-0DBD8B?style=for-the-badge&logo=element&logoColor=white)](https://element.io)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://postgresql.org)
 [![Linux Ready](https://img.shields.io/badge/Linux-Ubuntu%20%7C%20Debian-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://ubuntu.com)
-[![Version](https://img.shields.io/badge/Version-v2.38.30-6366F1?style=for-the-badge)](VERSION.md)
+[![Version](https://img.shields.io/badge/Version-v2.39.1-6366F1?style=for-the-badge)](VERSION.md)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
 
 [English Documentation](#-english-documentation) • [راهنمای فارسی](#-راهنمای-فارسی-persian-documentation)
@@ -121,7 +121,7 @@ The **Raven Matrix Stack Manager** is an all-in-one, enterprise-grade spatial co
 Deploy the entire full-stack Raven Matrix Stack Manager panel on any fresh Ubuntu or Debian VPS (x86_64 / ARM64) with a single interactive command:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/setup-panel.sh | sudo bash
 ```
 
 ### 📋 How the Interactive Setup Works:
@@ -173,7 +173,7 @@ sudo systemctl stop matrix-manager
 To completely remove the Matrix Stack Manager panel, its databases, persistent settings, systemd daemons, and related Nginx configurations from your VPS, run the interactive uninstaller:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/uninstall-panel.sh | sudo bash
 ```
 
 ---
@@ -184,8 +184,8 @@ If you wish to clone and run the source code locally for testing or development:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/shahbazimasoud/Matrix-Stack-Manager.git
-cd Matrix-Stack-Manager
+git clone https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git
+cd Matrix-Stack-Manager-Advance
 
 # 2. Install dependencies
 npm install
@@ -320,7 +320,7 @@ npm run build
 شما می‌توانید کل پروژه (شامل کلاینت پنل و سرور بک‌اند) را روی هر سرور ابری یا VPS خام (لینوکس اوبونتو یا دبیان) به سادگی با اجرای یک دستور تک‌خطی زیر نصب کنید:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/setup-panel.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/setup-panel.sh | sudo bash
 ```
 
 ### 📋 مراحل نصب تعاملی پنل:
@@ -372,7 +372,7 @@ sudo systemctl stop matrix-manager
 در صورتی که می‌خواهید پنل را به همراه تمامی فایل‌ها، سرویس‌ها، دیتابیس‌ها و تنظیمات وب‌سرور Nginx به طور کامل حذف کنید، از اسکریپت حذف تعاملی زیر استفاده نمایید:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/uninstall-panel.sh | sudo bash
 ```
 
 ---
@@ -383,8 +383,8 @@ curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/
 
 ```bash
 # ۱. کلون کردن ریپازیتوری
-git clone https://github.com/shahbazimasoud/Matrix-Stack-Manager.git
-cd Matrix-Stack-Manager
+git clone https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git
+cd Matrix-Stack-Manager-Advance
 
 # ۲. نصب پکیج‌ها و وابستگی‌ها
 npm install

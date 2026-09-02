@@ -58,9 +58,9 @@ interface GithubCommitItem {
   };
 }
 
-const REPO_URL = "https://github.com/shahbazimasoud/Matrix-Stack-Manager.git";
-const REPO_WEB_URL = "https://github.com/shahbazimasoud/Matrix-Stack-Manager";
-const GITHUB_COMMITS_API = "https://api.github.com/repos/shahbazimasoud/Matrix-Stack-Manager/commits?per_page=15";
+const REPO_URL = "https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git";
+const REPO_WEB_URL = "https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance";
+const GITHUB_COMMITS_API = "https://api.github.com/repos/shahbazimasoud/Matrix-Stack-Manager-Advance/commits?per_page=15";
 
 export const AboutModal: React.FC<AboutModalProps> = ({
   isOpen,
@@ -522,7 +522,7 @@ Repository: ${REPO_URL}`;
                     <div className="p-8 text-center space-y-3">
                       <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-500" />
                       <p className="text-xs text-slate-400">
-                        {lang === 'fa' ? 'در حال دریافت آخرین کامیت‌ها از مخزن گیت‌هاب...' : 'Fetching live commit history from github.com/shahbazimasoud/Matrix-Stack-Manager...'}
+                        {lang === 'fa' ? 'در حال دریافت آخرین کامیت‌ها از مخزن گیت‌هاب...' : 'Fetching live commit history from github.com/shahbazimasoud/Matrix-Stack-Manager-Advance...'}
                       </p>
                     </div>
                   ) : commitError && liveCommits.length === 0 ? (

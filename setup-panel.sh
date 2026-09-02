@@ -273,7 +273,7 @@ if [ "$(pwd)" != "$INSTALL_DIR" ]; then
     # Ensure git commands don't hang indefinitely by setting transfer timeouts
     if ! git -c network.maxSubmissions=1 -c network.lowSpeedLimit=1000 -c network.lowSpeedTime=30 fetch --all; then
       log_warning "Git fetch failed. Trying fallback pull via proxy..."
-      git remote set-url origin https://mirror.ghproxy.com/https://github.com/shahbazimasoud/Matrix-Stack-Manager.git
+      git remote set-url origin https://mirror.ghproxy.com/https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git
       git fetch --all || true
     fi
     git reset --hard origin/master || git reset --hard origin/main || log_warning "Failed to hard reset, proceeding anyway..."
@@ -284,14 +284,14 @@ if [ "$(pwd)" != "$INSTALL_DIR" ]; then
     
     # Try 1: Direct Git Clone
     log_info "Attempt 1: Direct git clone from GitHub..."
-    if git -c network.maxSubmissions=1 -c network.lowSpeedLimit=1000 -c network.lowSpeedTime=30 clone https://github.com/shahbazimasoud/Matrix-Stack-Manager.git "$INSTALL_DIR"; then
+    if git -c network.maxSubmissions=1 -c network.lowSpeedLimit=1000 -c network.lowSpeedTime=30 clone https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git "$INSTALL_DIR"; then
       CLONE_SUCCESS=true
     fi
     
     # Try 2: Git Clone via Mirror/Proxy (e.g. ghproxy)
     if [ "$CLONE_SUCCESS" = false ]; then
       log_warning "Direct git clone timed out or failed. Attempt 2: Cloning via GitHub Mirror Proxy..."
-      if git -c network.maxSubmissions=1 -c network.lowSpeedLimit=1000 -c network.lowSpeedTime=30 clone https://mirror.ghproxy.com/https://github.com/shahbazimasoud/Matrix-Stack-Manager.git "$INSTALL_DIR"; then
+      if git -c network.maxSubmissions=1 -c network.lowSpeedLimit=1000 -c network.lowSpeedTime=30 clone https://mirror.ghproxy.com/https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance.git "$INSTALL_DIR"; then
         CLONE_SUCCESS=true
       fi
     fi
@@ -301,15 +301,15 @@ if [ "$(pwd)" != "$INSTALL_DIR" ]; then
       log_warning "Cloning via mirror failed. Attempt 3: Downloading repository ZIP directly..."
       # Install unzip if not present
       apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" unzip || true
-      rm -f /tmp/Matrix-Stack-Manager.zip
+      rm -f /tmp/Matrix-Stack-Manager-Advance.zip
       
-      if curl -f -sSL --connect-timeout 20 --max-time 120 -o /tmp/Matrix-Stack-Manager.zip https://github.com/shahbazimasoud/Matrix-Stack-Manager/archive/refs/heads/master.zip || \
-         curl -f -sSL --connect-timeout 20 --max-time 120 -o /tmp/Matrix-Stack-Manager.zip https://mirror.ghproxy.com/https://github.com/shahbazimasoud/Matrix-Stack-Manager/archive/refs/heads/master.zip; then
+      if curl -f -sSL --connect-timeout 20 --max-time 120 -o /tmp/Matrix-Stack-Manager-Advance.zip https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance/archive/refs/heads/master.zip || \
+         curl -f -sSL --connect-timeout 20 --max-time 120 -o /tmp/Matrix-Stack-Manager-Advance.zip https://mirror.ghproxy.com/https://github.com/shahbazimasoud/Matrix-Stack-Manager-Advance/archive/refs/heads/master.zip; then
         log_info "ZIP downloaded successfully. Extracting to $INSTALL_DIR..."
-        unzip -q -o /tmp/Matrix-Stack-Manager.zip -d /tmp/matrix-extracted
-        # The zip extracts into Matrix-Stack-Manager-master/ folder inside /tmp/matrix-extracted
-        mv /tmp/matrix-extracted/Matrix-Stack-Manager-master/* "$INSTALL_DIR/" || cp -r /tmp/matrix-extracted/Matrix-Stack-Manager-master/* "$INSTALL_DIR/" || true
-        rm -rf /tmp/matrix-extracted /tmp/Matrix-Stack-Manager.zip
+        unzip -q -o /tmp/Matrix-Stack-Manager-Advance.zip -d /tmp/matrix-extracted
+        # The zip extracts into Matrix-Stack-Manager-Advance-master/ folder inside /tmp/matrix-extracted
+        mv /tmp/matrix-extracted/Matrix-Stack-Manager-Advance-master/* "$INSTALL_DIR/" || cp -r /tmp/matrix-extracted/Matrix-Stack-Manager-Advance-master/* "$INSTALL_DIR/" || true
+        rm -rf /tmp/matrix-extracted /tmp/Matrix-Stack-Manager-Advance.zip
         CLONE_SUCCESS=true
       fi
     fi
@@ -703,5 +703,5 @@ echo -e "${CYAN}================================================================
 echo -e "  ${YELLOW}Security Note:${NC} Store these login credentials in a secure place."
 echo -e "  To inspect panel server logs: ${BLUE}journalctl -u matrix-manager -f -n 50${NC}"
 echo -e "  To restart panel service:     ${BLUE}systemctl restart matrix-manager${NC}"
-echo -e "  To uninstall panel:           ${RED}curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager/master/uninstall-panel.sh | sudo bash${NC}"
+echo -e "  To uninstall panel:           ${RED}curl -sSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/uninstall-panel.sh | sudo bash${NC}"
 echo -e "${CYAN}======================================================================${NC}"
