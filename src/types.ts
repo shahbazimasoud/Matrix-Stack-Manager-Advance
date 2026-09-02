@@ -47,6 +47,50 @@ export interface MetricTrend {
   diskLatencyMs?: number;
 }
 
+export interface ServerNodeConfig {
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  privateKey?: string;
+  authType: 'password' | 'key';
+  
+  // Specific configurations per node role
+  dbHost?: string;
+  dbPort?: number;
+  dbName?: string;
+  dbUser?: string;
+  dbPass?: string;
+  
+  elementConfigPath?: string;
+  webServerService?: string;
+  
+  homeserverYamlPath?: string;
+  configPath?: string;
+  homeserverLogPath?: string;
+  apiPort?: number;
+  adminUsername?: string;
+  adminPassword?: string;
+  adminAccessToken?: string;
+}
+
+export interface ClusterNodeStats {
+  id: string;
+  name: string;
+  role: 'synapse' | 'database' | 'element';
+  roleTitle: string;
+  host: string;
+  port: number;
+  status: 'online' | 'offline' | 'warning' | 'pending';
+  latencyMs?: number;
+  cpu: number;
+  memory: { pct: number; total: number; free: number };
+  disk: { pct: number; total: number; free: number };
+  uptime: string;
+  services: { id: string; name: string; status: 'active' | 'inactive' | 'error' }[];
+  details?: string;
+}
+
 export interface SystemStats {
   cpuUsage: number;
   memoryUsage: number;
@@ -80,6 +124,8 @@ export interface SystemStats {
   serverTime?: string;
   serverTimezone?: string;
   serverTimestamp?: number;
+  deploymentMode?: 'standalone' | 'distributed';
+  clusterNodes?: ClusterNodeStats[];
 }
 
 export interface ServiceState {

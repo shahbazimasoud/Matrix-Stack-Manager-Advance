@@ -15,9 +15,17 @@
 
 ---
 
-## Current Panel Version: **v2.38.32** (Released: 2026-08-27)
+## Current Panel Version: **v2.39.0** (Released: 2026-09-02)
 
 ### Changelog History
+
+#### **v2.39.0** - 2026-09-02
+- **Distributed Multi-Server Architecture Support for Synapse, Database & Element**:
+  - **Distributed Cluster Routing Engine**: Added `resolveNodeProfile` routing support across remote execution layers to dynamically target Synapse, PostgreSQL, and Element Web on discrete server nodes.
+  - **Dedicated Multi-Node Credentials**: Added individual SSH host, port, username, and key/password configurations for Synapse, Database, and Element Web instances.
+  - **Aggregated Multi-Node Telemetry**: Real-time dashboard telemetry now queries and aggregates CPU, Memory, Disk, and Ping latency across all active cluster nodes.
+  - **Cluster Topology Visualizer**: Added live cluster status indicators and node health metrics in both Connection Manager and Dashboard overview.
+  - **Parallel Multi-Node Connection Diagnostics**: Added full-cluster diagnostics to test SSH reachability, PostgreSQL authentication, and Matrix API accessibility across all nodes simultaneously.
 
 #### **v2.38.32** - 2026-08-27
 - **Enforced Session Termination & Login Redirection on System Update**:

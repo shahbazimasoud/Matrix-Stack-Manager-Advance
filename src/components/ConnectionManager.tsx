@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Globe, 
   Server, 
@@ -22,40 +22,17 @@ import {
   Lock,
   Edit,
   Download,
-  Upload
+  Upload,
+  Cpu,
+  Layers,
+  Network,
+  Copy,
+  Check,
+  ShieldCheck,
+  Radio,
+  Clock
 } from 'lucide-react';
-
-export interface ConnectionProfile {
-  id: string;
-  name: string;
-  host: string;
-  port: number;
-  username: string;
-  password?: string;
-  privateKey?: string;
-  authType: 'password' | 'key';
-  
-  // Database configuration
-  dbHost?: string;
-  dbPort?: number;
-  dbName?: string;
-  dbUser?: string;
-  dbPass?: string;
-  
-  // Config paths
-  configPath?: string;
-  homeserverYamlPath?: string;
-  elementConfigPath?: string;
-  homeserverLogPath?: string;
-
-  // Admin credentials
-  adminUsername?: string;
-  adminPassword?: string;
-  adminAccessToken?: string;
-
-  
-  isActive: boolean;
-}
+import { ConnectionProfile, ServerNodeConfig } from '../types';
 
 interface ConnectionManagerProps {
   authToken: string;
@@ -68,25 +45,36 @@ interface ConnectionManagerProps {
 const connTranslations = {
   fa: {
     pageTitle: "اتصالات سرور",
-    pageSubtitle: "مدیریت و سوئیچ بین محیط‌های سرور محلی و راه دور به صورت امن از طریق SSH.",
+    pageSubtitle: "مدیریت و سوئیچ بین سرورهای محلی، سرورهای راه دور (Standalone) و خوشه‌های توزیع‌شده چندسروره (Distributed Cluster).",
     viewProfiles: "مشاهده پروفایل‌ها",
-    addRemoteServer: "افزودن سرور راه دور",
+    addRemoteServer: "افزودن سرور / خوشه جدید",
     exportConnections: "خروجی (Export)",
     importConnections: "ورودی (Import)",
     exportSuccess: "پروفایل‌های اتصال با موفقیت خروجی گرفته شدند.",
     importSuccess: "پروفایل‌های اتصال با موفقیت ایمپورت شدند.",
     importError: "خطا در بارگذاری یا ساختار فایل JSON نامعتبر است.",
-    configureRemoteServer: "پیکربندی اتصال سرور راه دور",
-    vpsDetailsDesc: "مشخصات سرور مجازی (VPS) مورد نظر را وارد کنید. سیستم از کانال‌های امن SSH برای دریافت آمار و اجرای دستورات استفاده می‌کند.",
-    profileName: "نام پروفایل *",
+    configureRemoteServer: "پیکربندی اتصال سرور و معماری استقرار",
+    vpsDetailsDesc: "مشخصات سرورها را وارد نمایید. در حالت توزیع‌شده می‌توانید ساینپس، دیتابیس و المنت را روی سرورهای جداگانه تعریف کنید.",
+    profileName: "نام پروفایل / خوشه *",
+    deploymentMode: "معماری استقرار سیستم",
+    standaloneMode: "تک‌سروره / تجمیعی (Standalone)",
+    standaloneModeDesc: "تمام سرویس‌ها (ساینپس، دیتابیس و المنت) روی یک سرور مجازی قرار دارند.",
+    distributedMode: "توزیع‌شده چندسروره (Distributed Cluster)",
+    distributedModeDesc: "ساینپس، دیتابیس PostgreSQL و المنت وب روی سرورهای مجزا با IP و SSH اختصاصی قرار دارند.",
+    synapseNodeTab: "سرور ساینپس (Synapse Node)",
+    databaseNodeTab: "سرور دیتابیس (DB Node)",
+    elementNodeTab: "سرور المنت (Element Node)",
     hostIp: "میزبان / IP *",
-    port: "پورت",
+    port: "پورت SSH",
     sshUsername: "نام کاربری SSH *",
     authType: "نوع احراز هویت",
     passwordLabel: "رمز عبور",
     privateKeyLabel: "کلید خصوصی SSH",
     sshPassword: "رمز عبور SSH",
     sshPrivateKeyContent: "محتوای کلید خصوصی SSH",
+    servicePort: "پورت سرویس",
+    copyFromSynapse: "کپی مشخصات ورود از سرور ساینپس",
+    copySuccess: "مشخصات SSH با موفقیت کپی شد.",
     showAdvanced: "نمایش تنظیمات پیشرفته (پستگرس و مسیرها)",
     hideAdvanced: "پنهان کردن تنظیمات پیشرفته (پستگرس و مسیرها)",
     showAdminSettings: "نمایش تنظیمات توکن ادمین",
@@ -97,7 +85,7 @@ const connTranslations = {
     adminPasswordLabel: "رمز عبور ادمین",
     adminAccessTokenLabel: "توکن دسترسی ادمین (اختیاری)",
     cancel: "لغو",
-    saveProfile: "ذخیره پروفایل",
+    saveProfile: "ذخیره پروفایل / خوشه",
     loadingProfiles: "در حال بارگذاری پروفایل‌های اتصال...",
     noProfilesTitle: "پروفیلی یافت نشد",
     noProfilesDesc: "شما هیچ پروفایل اتصالی تعریف نکرده‌اید. روی دکمه افزودن سرور راه دور کلیک کنید تا یک سرور دیگر را متصل کنید.",
@@ -105,6 +93,7 @@ const connTranslations = {
     connectionType: "نوع اتصال:",
     internalSandbox: "سنباکس داخلی محلی",
     remoteSsh: "اتصال SSH راه دور",
+    distributedCluster: "خوشه توزیع‌شده چندسروره",
     authMethod: "روش احراز هویت:",
     sshPrivateKey: "کلید خصوصی SSH",
     passwordCredentials: "رمز عبور و مشخصات ورود",
@@ -114,33 +103,49 @@ const connTranslations = {
     connectedBadge: "متصل",
     detectDbBtn: "شناسایی اطلاعات دیتابیس (Detect DB Info)",
     detectingDb: "در حال شناسایی دیتابیس...",
-    detectDbNotice: "اتصال SSH به سرور هدف (جایی که ماتریکس ساینپس و دیتابیس پستگرس با هم روی یک سرور نصب هستند) و استخراج خودکار DB Host (Local to Remote VPS), DB Port, DB Name, DB Username و DB Password از فایل homeserver.yaml.",
+    detectDbNotice: "اتصال SSH به سرور هدف و استخراج خودکار DB Host, DB Port, DB Name, DB Username و DB Password از فایل homeserver.yaml.",
     detectDbSuccess: "مشخصات دیتابیس با موفقیت از سرور هدف استخراج و در فیلدهای زیر درج شد!",
-    detectDbMissingSSH: "لطفاً ابتدا آدرس سرور (Host)، پورت، نام کاربری SSH و رمز عبور یا کلید خصوصی را در بالا وارد نمایید.",
+    detectDbMissingSSH: "لطفاً ابتدا آدرس سرور (Host)، پورت، نام کاربری SSH و رمز عبور یا کلید خصوصی را وارد نمایید.",
     detectDbFailed: "خطا در شناسایی اطلاعات دیتابیس:",
-    detectDbBadge: "سرور میزبان ساینپس و دیتابیس (Co-located)"
+    detectDbBadge: "استخراج خودکار از سرور ساینپس",
+    testAllNodes: "تست اتصال سراسری خوشه",
+    clusterTopology: "توپولوژی معماری خوشه",
+    synapseServer: "سرور ساینپس",
+    databaseServer: "سرور دیتابیس",
+    elementServer: "سرور المنت وب"
   },
   en: {
     pageTitle: "Server Connections",
-    pageSubtitle: "Manage and switch between local and remote server environments securely over SSH.",
+    pageSubtitle: "Manage and switch between local environments, standalone remote VPS, and distributed multi-server clusters.",
     viewProfiles: "View Profiles",
-    addRemoteServer: "Add Remote Server",
+    addRemoteServer: "Add Server / Cluster",
     exportConnections: "Export Connections",
     importConnections: "Import Connections",
     exportSuccess: "Connection profiles exported successfully.",
     importSuccess: "Connection profiles imported successfully.",
     importError: "Failed to import. Invalid JSON file structure.",
-    configureRemoteServer: "Configure Remote Server connection",
-    vpsDetailsDesc: "Provide target VPS details. The system uses secure SSH channels to pull stats and execute queries.",
-    profileName: "Profile Name *",
+    configureRemoteServer: "Configure Server Connection & Architecture",
+    vpsDetailsDesc: "Provide server connection details. Under distributed mode, you can assign Synapse, Database, and Element to separate physical/virtual nodes.",
+    profileName: "Profile / Cluster Name *",
+    deploymentMode: "Deployment Architecture",
+    standaloneMode: "Single Server (Standalone)",
+    standaloneModeDesc: "All components (Synapse, PostgreSQL, and Element) run co-located on a single VPS.",
+    distributedMode: "Distributed Multi-Server Cluster",
+    distributedModeDesc: "Synapse, PostgreSQL Database, and Element Web run on distinct servers with dedicated IPs and SSH credentials.",
+    synapseNodeTab: "Synapse Node",
+    databaseNodeTab: "PostgreSQL DB Node",
+    elementNodeTab: "Element Web Node",
     hostIp: "Host / IP *",
-    port: "Port",
+    port: "SSH Port",
     sshUsername: "SSH Username *",
     authType: "Authentication Type",
     passwordLabel: "Password",
     privateKeyLabel: "SSH Private Key",
     sshPassword: "SSH Password",
     sshPrivateKeyContent: "SSH Private Key Content",
+    servicePort: "Service Port",
+    copyFromSynapse: "Copy SSH Credentials from Synapse Node",
+    copySuccess: "SSH credentials copied successfully.",
     showAdvanced: "Show Advanced Settings (PostgreSQL & Paths)",
     hideAdvanced: "Hide Advanced Settings (PostgreSQL & Paths)",
     showAdminSettings: "Show Admin Token Settings",
@@ -151,14 +156,15 @@ const connTranslations = {
     adminPasswordLabel: "Admin Password",
     adminAccessTokenLabel: "Admin Access Token (Optional)",
     cancel: "Cancel",
-    saveProfile: "Save Profile",
+    saveProfile: "Save Profile / Cluster",
     loadingProfiles: "Loading Connection Profiles...",
     noProfilesTitle: "No Profiles Found",
-    noProfilesDesc: "You haven't defined any connection profiles. Click the Add Remote Server button to link a remote node.",
+    noProfilesDesc: "You haven't defined any connection profiles. Click the Add Remote Server button to link a remote node or cluster.",
     activeServer: "Active Server",
     connectionType: "Connection Type:",
     internalSandbox: "Internal Sandbox",
-    remoteSsh: "Remote SSH",
+    remoteSsh: "Remote SSH (Standalone)",
+    distributedCluster: "Distributed Multi-Node Cluster",
     authMethod: "Auth Method:",
     sshPrivateKey: "SSH Private Key",
     passwordCredentials: "Password Credentials",
@@ -168,51 +174,68 @@ const connTranslations = {
     connectedBadge: "Connected",
     detectDbBtn: "Detect DB Info",
     detectingDb: "Detecting DB Info...",
-    detectDbNotice: "Connects via SSH to the target server (where Matrix Synapse and PostgreSQL are co-located) and automatically extracts DB Host (Local to Remote VPS), Port, Name, Username, and Password from homeserver.yaml.",
+    detectDbNotice: "Connects via SSH to the Synapse server and automatically extracts DB Host, Port, Name, Username, and Password from homeserver.yaml.",
     detectDbSuccess: "Database parameters successfully detected from target server and populated into the form!",
     detectDbMissingSSH: "Please enter SSH Host, Port, Username, and Password or Private Key first.",
     detectDbFailed: "Failed to detect database information:",
-    detectDbBadge: "Co-located Synapse & DB Host"
+    detectDbBadge: "Auto-extract from Synapse Node",
+    testAllNodes: "Test Full Cluster Connectivity",
+    clusterTopology: "Cluster Topology Overview",
+    synapseServer: "Synapse Node",
+    databaseServer: "Postgres Node",
+    elementServer: "Element Web Node"
   },
   es: {
     pageTitle: "Conexiones de Servidor",
-    pageSubtitle: "Administre y cambie entre entornos de servidor locales y remotos de forma segura a través de SSH.",
+    pageSubtitle: "Administre y cambie entre entornos locales, VPS remotos independientes y clústeres distribuidos multiservidor.",
     viewProfiles: "Ver Perfiles",
-    addRemoteServer: "Agregar Servidor Remoto",
+    addRemoteServer: "Agregar Servidor / Clúster",
     exportConnections: "Exportar Conexiones",
     importConnections: "Importar Conexiones",
     exportSuccess: "Perfiles de conexión exportados correctamente.",
     importSuccess: "Perfiles de conexión importados correctamente.",
     importError: "Error al importar. Estructura de archivo JSON no válida.",
-    configureRemoteServer: "Configurar conexión de Servidor Remoto",
-    vpsDetailsDesc: "Proporcione los detalles del VPS de destino. El sistema utiliza canales SSH seguros para extraer estadísticas y ejecutar consultas.",
-    profileName: "Nombre del Perfil *",
+    configureRemoteServer: "Configurar conexión de Servidor y Arquitectura",
+    vpsDetailsDesc: "Proporcione los detalles del servidor. En modo distribuido, puede asignar Synapse, Base de Datos y Element a nodos independientes.",
+    profileName: "Nombre del Perfil / Clúster *",
+    deploymentMode: "Arquitectura de Despliegue",
+    standaloneMode: "Servidor Único (Independiente)",
+    standaloneModeDesc: "Todos los servicios (Synapse, Base de Datos y Element) se ejecutan en un único VPS.",
+    distributedMode: "Clúster Distribuido Multiservidor",
+    distributedModeDesc: "Synapse, PostgreSQL y Element Web se ejecutan en servidores separados con IP y SSH dedicados.",
+    synapseNodeTab: "Nodo Synapse",
+    databaseNodeTab: "Nodo PostgreSQL",
+    elementNodeTab: "Nodo Element Web",
     hostIp: "Host / IP *",
-    port: "Puerto",
+    port: "Puerto SSH",
     sshUsername: "Usuario SSH *",
     authType: "Tipo de Autenticación",
     passwordLabel: "Contraseña",
     privateKeyLabel: "Clave Privada SSH",
     sshPassword: "Contraseña SSH",
     sshPrivateKeyContent: "Contenido de la Clave Privada SSH",
+    servicePort: "Puerto del Servicio",
+    copyFromSynapse: "Copiar credenciales SSH del nodo Synapse",
+    copySuccess: "Credenciales SSH copiadas exitosamente.",
     showAdvanced: "Mostrar Configuración Avanzada (PostgreSQL y Rutas)",
     hideAdvanced: "Ocultar Configuración Avanzada (PostgreSQL y Rutas)",
     showAdminSettings: "Mostrar Configuración de Token de Administrador",
     hideAdminSettings: "Ocultar Configuración de Token de Administrador",
-    adminTokenTitle: "Token de Administrador y Credenciales de Matrix",
-    adminTokenDesc: "Ingrese el nombre de usuario y la contraseña del administrador para Matrix Element Chat o proporcione un Token de acceso de administrador para usar en las API de administración de Synapse.",
+    adminTokenTitle: "Token de Administrador y Credenciales Matrix",
+    adminTokenDesc: "Ingrese las credenciales del administrador de Matrix o proporcione un token de acceso de administrador para las API de Synapse.",
     adminUsernameLabel: "Usuario Administrador",
     adminPasswordLabel: "Contraseña Administrador",
     adminAccessTokenLabel: "Token de Acceso de Administrador (Opcional)",
     cancel: "Cancelar",
     saveProfile: "Guardar Perfil",
-    loadingProfiles: "Cargando perfiles de conexión...",
+    loadingProfiles: "Cargando perfiles...",
     noProfilesTitle: "No se encontraron perfiles",
-    noProfilesDesc: "No has definido ningún perfil de conexión. Haga clic en el botón Agregar servidor remoto para vincular un nodo remoto.",
+    noProfilesDesc: "No ha definido ningún perfil de conexión.",
     activeServer: "Servidor Activo",
     connectionType: "Tipo de Conexión:",
-    internalSandbox: "Sandbox Interno",
+    internalSandbox: "Sandbox Local Interno",
     remoteSsh: "SSH Remoto",
+    distributedCluster: "Clúster Distribuido Multiservidor",
     authMethod: "Método de Autenticación:",
     sshPrivateKey: "Clave Privada SSH",
     passwordCredentials: "Credenciales de Contraseña",
@@ -221,52 +244,69 @@ const connTranslations = {
     testing: "Probando...",
     connectedBadge: "Conectado",
     detectDbBtn: "Detectar Información de BD",
-    detectingDb: "Detectando información de BD...",
-    detectDbNotice: "Se conecta al servidor de destino (donde Synapse y PostgreSQL están coubicados) y extrae automáticamente Host de BD, Puerto, Nombre, Usuario y Contraseña de homeserver.yaml.",
-    detectDbSuccess: "¡Parámetros de la base de datos detectados con éxito del servidor de destino y rellenados en el formulario!",
-    detectDbMissingSSH: "Por favor ingrese primero el Host SSH, Puerto, Usuario y Contraseña o Clave.",
-    detectDbFailed: "Error al detectar información de la base de datos:",
-    detectDbBadge: "Host de Synapse y BD coubicados"
+    detectingDb: "Detectando BD...",
+    detectDbNotice: "Se conecta por SSH al servidor Synapse y extrae automáticamente los parámetros de BD desde homeserver.yaml.",
+    detectDbSuccess: "¡Parámetros de base de datos detectados exitosamente!",
+    detectDbMissingSSH: "Ingrese primero el host SSH, puerto y credenciales.",
+    detectDbFailed: "Error al detectar la base de datos:",
+    detectDbBadge: "Autoextracción desde Synapse",
+    testAllNodes: "Probar Conectividad del Clúster",
+    clusterTopology: "Topología del Clúster",
+    synapseServer: "Nodo Synapse",
+    databaseServer: "Nodo Postgres",
+    elementServer: "Nodo Element Web"
   },
   ar: {
     pageTitle: "اتصالات الخادم",
-    pageSubtitle: "إدارة والتبديل بين بيئات الخادم المحلية والبعيدة بشكل آمن عبر SSH.",
+    pageSubtitle: "إدارة والتبديل بين البيئات المحلية والخوادم البعيدة ومجموعات الخوادم الموزعة متعددة العقد.",
     viewProfiles: "عرض ملفات التعريف",
-    addRemoteServer: "إضافة خادم بعيد",
-    exportConnections: "تصدير الاتصالات",
-    importConnections: "استيراد الاتصالات",
+    addRemoteServer: "إضافة خادم / مجموعة جديدة",
+    exportConnections: "تصدير (Export)",
+    importConnections: "استيراد (Import)",
     exportSuccess: "تم تصدير ملفات تعريف الاتصال بنجاح.",
     importSuccess: "تم استيراد ملفات تعريف الاتصال بنجاح.",
-    importError: "فشل الاستيراد. هيكل ملف JSON غير صالحة.",
-    configureRemoteServer: "تكوين اتصال الخادم البعيد",
-    vpsDetailsDesc: "تقديم تفاصيل خادم VPS المستهدف. يستخدم النظام قنوات SSH آمنة لسحب الإحصائيات وتشغيل الاستعلامات.",
-    profileName: "اسم ملف التعريف *",
+    importError: "فشل الاستيراد. هيكل ملف JSON غير صالح.",
+    configureRemoteServer: "تكوين اتصال الخادم وهندسة النشر",
+    vpsDetailsDesc: "أدخل تفاصيل الخادم. في الوضع الموزع، يمكنك تحديد خوادم منفصلة لـ Synapse وقاعدة البيانات وElement.",
+    profileName: "اسم ملف التعريف / المجموعة *",
+    deploymentMode: "هندسة النشر",
+    standaloneMode: "خادم فردي (Standalone)",
+    standaloneModeDesc: "جميع الخدمات (Synapse وقاعدة البيانات وElement) تعمل على خادم افتراضي واحد.",
+    distributedMode: "مجموعة موزعة متعددة الخوادم (Distributed)",
+    distributedModeDesc: "يعمل كل من Synapse وPostgreSQL وElement Web على خوادم منفصلة بعناوين IP وبيانات SSH مخصصة.",
+    synapseNodeTab: "عقدة Synapse",
+    databaseNodeTab: "عقدة قاعدة البيانات Postgres",
+    elementNodeTab: "عقدة Element Web",
     hostIp: "المضيف / IP *",
-    port: "المنفذ",
+    port: "منفذ SSH",
     sshUsername: "اسم مستخدم SSH *",
     authType: "نوع المصادقة",
     passwordLabel: "كلمة المرور",
     privateKeyLabel: "مفتاح SSH الخاص",
     sshPassword: "كلمة مرور SSH",
     sshPrivateKeyContent: "محتوى مفتاح SSH الخاص",
+    servicePort: "منفذ الخدمة",
+    copyFromSynapse: "نسخ بيانات الاعتماد من عقدة Synapse",
+    copySuccess: "تم نسخ بيانات اعتماد SSH بنجاح.",
     showAdvanced: "عرض الإعدادات المتقدمة (PostgreSQL والمسارات)",
     hideAdvanced: "إخفاء الإعدادات المتقدمة (PostgreSQL والمسارات)",
     showAdminSettings: "عرض إعدادات توكن المسؤول",
     hideAdminSettings: "إخفاء إعدادات توكن المسؤول",
     adminTokenTitle: "توكن المسؤول وبيانات اعتماد ماتریکس",
-    adminTokenDesc: "أدخل اسم مستخدم وكلمة مرور المسؤول لـ Matrix Element Chat أو قم بتوفير توكن وصول المسؤول للاستخدام في واجهات برمجة تطبيقات إدارة Synapse.",
+    adminTokenDesc: "أدخل اسم مستخدم وكلمة مرور المسؤول أو قم بتوفير توكن وصول المسؤول لاستخدامه في واجهات برمجة تطبيقات إدارة Synapse.",
     adminUsernameLabel: "اسم مستخدم المسؤول",
     adminPasswordLabel: "كلمة مرور المسؤول",
     adminAccessTokenLabel: "توكن وصول المسؤول (اختياري)",
     cancel: "إلغاء",
     saveProfile: "حفظ ملف التعريف",
-    loadingProfiles: "جاري تحميل ملفات تعريف الاتصال...",
+    loadingProfiles: "جاري تحميل ملفات التعريف...",
     noProfilesTitle: "لم يتم العثور على ملفات تعريف",
-    noProfilesDesc: "لم تقم بتحديد أي ملفات تعريف اتصال. انقر فوق زر إضافة خادم بعيد لربط عقدة بعيدة.",
+    noProfilesDesc: "لم تقم بتحديد أي ملفات تعريف اتصال.",
     activeServer: "الخادم النشط",
     connectionType: "نوع الاتصال:",
-    internalSandbox: "بيئة حماية داخلية (Sandbox)",
+    internalSandbox: "بيئة حماية داخلية",
     remoteSsh: "اتصال SSH بعيد",
+    distributedCluster: "مجموعة موزعة متعددة الخوادم",
     authMethod: "طريقة المصادقة:",
     sshPrivateKey: "مفتاح SSH الخاص",
     passwordCredentials: "بيانات اعتماد كلمة المرور",
@@ -276,33 +316,49 @@ const connTranslations = {
     connectedBadge: "متصل",
     detectDbBtn: "اكتشاف معلومات قاعدة البيانات",
     detectingDb: "جاري اكتشاف قاعدة البيانات...",
-    detectDbNotice: "يتصل بالخادم المستهدف (حيث يتم تثبيت Synapse وPostgreSQL معًا) ويستخرج تلقائيًا مضيف قاعدة البيانات والمنفذ والاسم واسم المستخدم وكلمة المرور من homeserver.yaml.",
-    detectDbSuccess: "تم استخراج معلمات قاعدة البيانات بنجاح من الخادم المستهدف وملء النموذج!",
-    detectDbMissingSSH: "يرجى إدخال مضيف SSH والمنفذ واسم المستخدم وكلمة المرور أو المفتاح أولاً.",
+    detectDbNotice: "يتصل بخادم Synapse ويستخرج تلقائيًا معلومات قاعدة البيانات من homeserver.yaml.",
+    detectDbSuccess: "تم اكتشاف معلمات قاعدة البيانات بنجاح!",
+    detectDbMissingSSH: "يرجى إدخال مضيف SSH والمنفذ واسم المستخدم أولاً.",
     detectDbFailed: "فشل في اكتشاف معلومات قاعدة البيانات:",
-    detectDbBadge: "مضيف Synapse وقاعدة البيانات في نفس الخادم"
+    detectDbBadge: "استخراج تلقائي من خادم Synapse",
+    testAllNodes: "اختبار اتصال المجموعة بالكامل",
+    clusterTopology: "طوبولوجيا المجموعة",
+    synapseServer: "عقدة Synapse",
+    databaseServer: "عقدة قاعدة البيانات",
+    elementServer: "عقدة Element Web"
   },
   de: {
     pageTitle: "Serververbindungen",
-    pageSubtitle: "Lokale und Remote-Serverumgebungen sicher über SSH verwalten und wechseln.",
+    pageSubtitle: "Lokale Umgebungen, Remote-VPS und verteilte Multi-Server-Cluster sicher über SSH verwalten.",
     viewProfiles: "Profile anzeigen",
-    addRemoteServer: "Remote-Server hinzufügen",
+    addRemoteServer: "Server / Cluster hinzufügen",
     exportConnections: "Verbindungen exportieren",
     importConnections: "Verbindungen importieren",
     exportSuccess: "Verbindungsprofile erfolgreich exportiert.",
     importSuccess: "Verbindungsprofile erfolgreich importiert.",
     importError: "Import fehlgeschlagen. Ungültige JSON-Dateistruktur.",
-    configureRemoteServer: "Remote-Server-Verbindung konfigurieren",
-    vpsDetailsDesc: "Geben Sie die VPS-Ziel-Details an. Das System verwendet sichere SSH-Kanäle, um Statistiken abzurufen und Abfragen auszuführen.",
-    profileName: "Profilname *",
+    configureRemoteServer: "Serververbindung & Architektur konfigurieren",
+    vpsDetailsDesc: "Geben Sie die Serverdetails ein. Im verteilten Modus können Synapse, DB und Element separaten Knoten zugewiesen werden.",
+    profileName: "Profil- / Clustername *",
+    deploymentMode: "Bereitstellungsarchitektur",
+    standaloneMode: "Einzelsystem (Standalone)",
+    standaloneModeDesc: "Alle Dienste (Synapse, DB und Element) laufen gemeinsam auf einem einzigen VPS.",
+    distributedMode: "Verteiltes Multi-Server-Cluster",
+    distributedModeDesc: "Synapse, PostgreSQL und Element Web laufen auf separaten Servern mit dedizierten IPs und SSH-Zugangsdaten.",
+    synapseNodeTab: "Synapse-Knoten",
+    databaseNodeTab: "PostgreSQL-Knoten",
+    elementNodeTab: "Element Web-Knoten",
     hostIp: "Host / IP *",
-    port: "Port",
+    port: "SSH-Port",
     sshUsername: "SSH-Benutzername *",
     authType: "Authentifizierungstyp",
     passwordLabel: "Passwort",
     privateKeyLabel: "SSH-Private-Key",
     sshPassword: "SSH-Passwort",
     sshPrivateKeyContent: "SSH-Private-Key-Inhalt",
+    servicePort: "Dienst-Port",
+    copyFromSynapse: "SSH-Zugangsdaten vom Synapse-Knoten kopieren",
+    copySuccess: "SSH-Zugangsdaten erfolgreich kopiert.",
     showAdvanced: "Erweiterte Einstellungen anzeigen (PostgreSQL & Pfade)",
     hideAdvanced: "Erweiterte Einstellungen ausblenden (PostgreSQL & Pfade)",
     showAdminSettings: "Admin-Token-Einstellungen anzeigen",
@@ -316,11 +372,12 @@ const connTranslations = {
     saveProfile: "Profil speichern",
     loadingProfiles: "Verbindungsprofile werden geladen...",
     noProfilesTitle: "Keine Profile gefunden",
-    noProfilesDesc: "Sie haben keine Verbindungsprofile definiert. Klicken Sie auf die Schaltfläche Remote-Server hinzufügen, um einen Remote-Knoten zu verknüpfen.",
+    noProfilesDesc: "Sie haben keine Verbindungsprofile definiert.",
     activeServer: "Aktiver Server",
     connectionType: "Verbindungstyp:",
     internalSandbox: "Interne Sandbox",
     remoteSsh: "Remote-SSH",
+    distributedCluster: "Verteiltes Multi-Server-Cluster",
     authMethod: "Authentifizierungsmethode:",
     sshPrivateKey: "SSH-Private-Key",
     passwordCredentials: "Passwort-Anmeldedaten",
@@ -330,51 +387,68 @@ const connTranslations = {
     connectedBadge: "Verbunden",
     detectDbBtn: "DB-Informationen erkennen",
     detectingDb: "Erkenne DB-Informationen...",
-    detectDbNotice: "Verbindet sich mit dem Zielserver (wo Synapse und PostgreSQL gemeinsam installiert sind) und extrahiert automatisch DB-Host, Port, Name, Benutzername und Passwort aus homeserver.yaml.",
-    detectDbSuccess: "Datenbankparameter wurden erfolgreich vom Zielserver erkannt und in das Formular eingetragen!",
-    detectDbMissingSSH: "Bitte geben Sie zuerst SSH-Host, Port, Benutzernamen und Passwort oder Schlüssel ein.",
+    detectDbNotice: "Verbindet sich mit dem Synapse-Server und extrahiert automatisch DB-Parameter aus homeserver.yaml.",
+    detectDbSuccess: "Datenbankparameter wurden erfolgreich erkannt!",
+    detectDbMissingSSH: "Bitte geben Sie zuerst SSH-Host, Port und Anmeldedaten ein.",
     detectDbFailed: "Fehler beim Erkennen der Datenbankinformationen:",
-    detectDbBadge: "Co-located Synapse & DB Host"
+    detectDbBadge: "Automatisch von Synapse extrahieren",
+    testAllNodes: "Gesamte Cluster-Konnektivität testen",
+    clusterTopology: "Cluster-Topologie-Übersicht",
+    synapseServer: "Synapse-Knoten",
+    databaseServer: "Postgres-Knoten",
+    elementServer: "Element Web-Knoten"
   },
   ru: {
     pageTitle: "Подключения к серверам",
-    pageSubtitle: "Безопасное управление и переключение между локальными и удаленными серверами по SSH.",
+    pageSubtitle: "Управление и переключение между локальными средами, автономными VPS и распределенными кластерами.",
     viewProfiles: "Просмотр профилей",
-    addRemoteServer: "Добавить удаленный сервер",
+    addRemoteServer: "Добавить сервер / кластер",
     exportConnections: "Экспорт подключений",
     importConnections: "Импорт подключений",
     exportSuccess: "Профили подключения успешно экспортированы.",
     importSuccess: "Профили подключения успешно импортированы.",
     importError: "Ошибка импорта. Недействительная структура JSON-файла.",
-    configureRemoteServer: "Настройка подключения к удаленному серверу",
-    vpsDetailsDesc: "Укажите данные удаленного VPS. Система использует безопасные каналы SSH для сбора статистики и выполнения команд.",
-    profileName: "Имя профиля *",
+    configureRemoteServer: "Настройка подключения сервера и архитектуры",
+    vpsDetailsDesc: "Укажите данные серверов. В распределенном режиме вы можете выделить Synapse, БД и Element на отдельные узлы.",
+    profileName: "Имя профиля / кластера *",
+    deploymentMode: "Архитектура развертывания",
+    standaloneMode: "Один сервер (Standalone)",
+    standaloneModeDesc: "Все сервисы (Synapse, БД и Element) работают совместно на одном VPS.",
+    distributedMode: "Распределенный кластер (Distributed)",
+    distributedModeDesc: "Synapse, PostgreSQL и Element Web размещены на разных серверах с индивидуальными IP и SSH-ключами.",
+    synapseNodeTab: "Узел Synapse",
+    databaseNodeTab: "Узел базы данных Postgres",
+    elementNodeTab: "Узел Element Web",
     hostIp: "Хост / IP *",
-    port: "Порт",
+    port: "SSH-порт",
     sshUsername: "Имя пользователя SSH *",
     authType: "Тип аутентификации",
     passwordLabel: "Пароль",
     privateKeyLabel: "Закрытый SSH-ключ",
     sshPassword: "Пароль SSH",
     sshPrivateKeyContent: "Содержимое закрытого SSH-ключа",
+    servicePort: "Порт службы",
+    copyFromSynapse: "Скопировать данные SSH из узла Synapse",
+    copySuccess: "Данные SSH успешно скопированы.",
     showAdvanced: "Показать дополнительные настройки (PostgreSQL и пути)",
     hideAdvanced: "Скрыть дополнительные настройки (PostgreSQL и пути)",
     showAdminSettings: "Показать настройки токена администратора",
     hideAdminSettings: "Скрыть настройки токена администратора",
     adminTokenTitle: "Токен администратора и учетные данные Matrix",
-    adminTokenDesc: "Введите имя пользователя и пароль администратора для Matrix Element Chat или укажите токен доступа администратора для использования Synapse Admin API.",
+    adminTokenDesc: "Введите имя пользователя и пароль администратора для Matrix Element Chat или укажите токен доступа администратора.",
     adminUsernameLabel: "Имя пользователя админа",
     adminPasswordLabel: "Пароль админа",
     adminAccessTokenLabel: "Токен доступа администратора (опционально)",
     cancel: "Отмена",
     saveProfile: "Сохранить профиль",
-    loadingProfiles: "Загрузка профилей подключения...",
+    loadingProfiles: "Загрузка профилей...",
     noProfilesTitle: "Профили не найдены",
-    noProfilesDesc: "Вы еще не создали ни одного профиля подключения. Нажмите кнопку «Добавить удаленный сервер», чтобы привязать новый сервер.",
+    noProfilesDesc: "Вы еще не создали ни одного профиля подключения.",
     activeServer: "Активный сервер",
     connectionType: "Тип подключения:",
     internalSandbox: "Локальная песочница",
     remoteSsh: "Удаленный SSH",
+    distributedCluster: "Распределенный кластер",
     authMethod: "Способ аутентификации:",
     sshPrivateKey: "Закрытый SSH-ключ",
     passwordCredentials: "Вход по паролю",
@@ -384,11 +458,16 @@ const connTranslations = {
     connectedBadge: "Подключено",
     detectDbBtn: "Определить данные БД",
     detectingDb: "Определение данных БД...",
-    detectDbNotice: "Подключается к целевому серверу (где Synapse и PostgreSQL установлены совместно) и автоматически извлекает хост БД, порт, имя, пользователя и пароль из homeserver.yaml.",
-    detectDbSuccess: "Параметры базы данных успешно определены с целевого сервера и внесены в форму!",
-    detectDbMissingSSH: "Пожалуйста, сначала введите хост SSH, порт, имя пользователя и пароль или ключ.",
+    detectDbNotice: "Подключается к серверу Synapse и автоматически извлекает параметры БД из homeserver.yaml.",
+    detectDbSuccess: "Параметры базы данных успешно определены!",
+    detectDbMissingSSH: "Пожалуйста, сначала введите хост SSH, порт и учетные данные.",
     detectDbFailed: "Не удалось определить информацию о базе данных:",
-    detectDbBadge: "Совместный хост Synapse и БД"
+    detectDbBadge: "Авто-извлечение из узла Synapse",
+    testAllNodes: "Проверить подключение всего кластера",
+    clusterTopology: "Топология кластера",
+    synapseServer: "Узел Synapse",
+    databaseServer: "Узел Postgres",
+    elementServer: "Узел Element Web"
   }
 };
 
@@ -404,18 +483,51 @@ export default function ConnectionManager({
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; ssh: boolean; db: boolean; api?: boolean; error?: string }>>({});
+  const [testResults, setTestResults] = useState<Record<string, { 
+    success: boolean; 
+    ssh: boolean; 
+    db: boolean; 
+    api?: boolean; 
+    error?: string;
+    clusterNodes?: Array<{ role: string; host: string; ssh: boolean; error?: string }>;
+  }>>({});
 
-  // Form State
+  // Active form tab for distributed mode
+  const [activeNodeTab, setActiveNodeTab] = useState<'synapse' | 'database' | 'element'>('synapse');
+
+  // Form State: Profile & Deployment Mode
   const [name, setName] = useState('');
+  const [deploymentMode, setDeploymentMode] = useState<'standalone' | 'distributed'>('standalone');
+
+  // Standalone / Primary Synapse Node Form State
   const [host, setHost] = useState('');
   const [port, setPort] = useState(22);
   const [username, setUsername] = useState('root');
   const [authType, setAuthType] = useState<'password' | 'key'>('password');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
-  
-  // Advanced DB Paths Form State
+  const [servicePort, setServicePort] = useState(8008);
+
+  // Distributed Database Node Form State
+  const [dbNodeHost, setDbNodeHost] = useState('');
+  const [dbNodePort, setDbNodePort] = useState(22);
+  const [dbNodeUsername, setDbNodeUsername] = useState('root');
+  const [dbNodeAuthType, setDbNodeAuthType] = useState<'password' | 'key'>('password');
+  const [dbNodePassword, setDbNodePassword] = useState('');
+  const [dbNodePrivateKey, setDbNodePrivateKey] = useState('');
+  const [dbNodeServicePort, setDbNodeServicePort] = useState(5432);
+
+  // Distributed Element Web Node Form State
+  const [elemNodeHost, setElemNodeHost] = useState('');
+  const [elemNodePort, setElemNodePort] = useState(22);
+  const [elemNodeUsername, setElemNodeUsername] = useState('root');
+  const [elemNodeAuthType, setElemNodeAuthType] = useState<'password' | 'key'>('password');
+  const [elemNodePassword, setElemNodePassword] = useState('');
+  const [elemNodePrivateKey, setElemNodePrivateKey] = useState('');
+  const [elemNodeServicePort, setElemNodeServicePort] = useState(80);
+  const [elemNodeWebPath, setElemNodeWebPath] = useState('/var/www/element');
+
+  // Advanced DB Settings
   const [dbHost, setDbHost] = useState('localhost');
   const [dbPort, setDbPort] = useState(5432);
   const [dbName, setDbName] = useState('synapse');
@@ -432,7 +544,14 @@ export default function ConnectionManager({
   const [showAdminSettings, setShowAdminSettings] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isTestingForm, setIsTestingForm] = useState(false);
-  const [formTestResult, setFormTestResult] = useState<{ success: boolean; ssh: boolean; db: boolean; api?: boolean; error?: string } | null>(null);
+  const [formTestResult, setFormTestResult] = useState<{ 
+    success: boolean; 
+    ssh: boolean; 
+    db: boolean; 
+    api?: boolean; 
+    error?: string;
+    clusterNodes?: Array<{ role: string; host: string; ssh: boolean; error?: string }>;
+  } | null>(null);
 
   // Admin Credentials Form State
   const [adminUsername, setAdminUsername] = useState('');
@@ -469,10 +588,27 @@ export default function ConnectionManager({
     }
   }, [authToken]);
 
+  const handleCopyCredentialsToDbNode = () => {
+    setDbNodePort(port);
+    setDbNodeUsername(username);
+    setDbNodeAuthType(authType);
+    setDbNodePassword(password);
+    setDbNodePrivateKey(privateKey);
+    showToast('success', t.copySuccess);
+  };
+
+  const handleCopyCredentialsToElemNode = () => {
+    setElemNodePort(port);
+    setElemNodeUsername(username);
+    setElemNodeAuthType(authType);
+    setElemNodePassword(password);
+    setElemNodePrivateKey(privateKey);
+    showToast('success', t.copySuccess);
+  };
+
   const handleDetectDbInfo = async () => {
     setDbDetectionMessage(null);
     
-    // Check if host and username are present
     if (!host || !host.trim()) {
       setDbDetectionMessage({
         type: 'error',
@@ -527,6 +663,9 @@ export default function ConnectionManager({
         if (data.dbPass) {
           setDbPass(data.dbPass);
         }
+        if (deploymentMode === 'distributed' && data.dbHost && data.dbHost !== '127.0.0.1' && data.dbHost !== 'localhost') {
+          setDbNodeHost(data.dbHost);
+        }
         setShowAdvanced(true);
         setDbDetectionMessage({
           type: 'success',
@@ -556,26 +695,72 @@ export default function ConnectionManager({
       return;
     }
 
-    const payload = {
-      name,
-      host,
-      port,
-      username,
+    const synapseNode: ServerNodeConfig = {
+      host: host.trim(),
+      port: Number(port) || 22,
+      username: username.trim(),
       authType,
       password: authType === 'password' ? password : '',
       privateKey: authType === 'key' ? privateKey : '',
-      dbHost,
-      dbPort,
-      dbName,
-      dbUser,
+      servicePort: Number(servicePort) || 8008,
+      configPath: homeserverYamlPath
+    };
+
+    let databaseNode: ServerNodeConfig | undefined = undefined;
+    if (deploymentMode === 'distributed') {
+      databaseNode = {
+        host: (dbNodeHost.trim() || dbHost.trim() || host.trim()),
+        port: Number(dbNodePort) || 22,
+        username: dbNodeUsername.trim() || 'root',
+        authType: dbNodeAuthType,
+        password: dbNodeAuthType === 'password' ? dbNodePassword : '',
+        privateKey: dbNodeAuthType === 'key' ? dbNodePrivateKey : '',
+        servicePort: Number(dbNodeServicePort) || 5432,
+        dbName: dbName.trim() || 'synapse',
+        dbUser: dbUser.trim() || 'synapse_user',
+        dbPass: dbPass
+      };
+    }
+
+    let elementNode: ServerNodeConfig | undefined = undefined;
+    if (deploymentMode === 'distributed') {
+      elementNode = {
+        host: (elemNodeHost.trim() || host.trim()),
+        port: Number(elemNodePort) || 22,
+        username: elemNodeUsername.trim() || 'root',
+        authType: elemNodeAuthType,
+        password: elemNodeAuthType === 'password' ? elemNodePassword : '',
+        privateKey: elemNodeAuthType === 'key' ? elemNodePrivateKey : '',
+        servicePort: Number(elemNodeServicePort) || 80,
+        webPath: elemNodeWebPath.trim() || '/var/www/element',
+        configPath: elementConfigPath
+      };
+    }
+
+    const payload: Partial<ConnectionProfile> = {
+      name: name.trim(),
+      deploymentMode,
+      host: host.trim(),
+      port: Number(port) || 22,
+      username: username.trim(),
+      authType,
+      password: authType === 'password' ? password : '',
+      privateKey: authType === 'key' ? privateKey : '',
+      synapseNode,
+      databaseNode,
+      elementNode,
+      dbHost: deploymentMode === 'distributed' && dbNodeHost ? dbNodeHost.trim() : (dbHost.trim() || 'localhost'),
+      dbPort: Number(dbPort) || 5432,
+      dbName: dbName.trim() || 'synapse',
+      dbUser: dbUser.trim() || 'synapse_user',
       dbPass,
       configPath,
       homeserverYamlPath,
       elementConfigPath,
       homeserverLogPath,
-      adminUsername,
+      adminUsername: adminUsername.trim(),
       adminPassword,
-      adminAccessToken,
+      adminAccessToken: adminAccessToken.trim(),
     };
 
     const url = editingId ? `/api/connections/${editingId}` : '/api/connections';
@@ -594,7 +779,7 @@ export default function ConnectionManager({
       return res.json();
     })
     .then(() => {
-      showToast('success', editingId ? 'Remote Connection Profile updated successfully!' : 'Remote Connection Profile created successfully!');
+      showToast('success', editingId ? 'Connection Profile updated successfully!' : 'Connection Profile created successfully!');
       setShowForm(false);
       resetForm();
       fetchProfiles();
@@ -609,12 +794,60 @@ export default function ConnectionManager({
     e.stopPropagation();
     setEditingId(profile.id);
     setName(profile.name || '');
-    setHost(profile.host || '');
-    setPort(profile.port || 22);
-    setUsername(profile.username || 'root');
-    setAuthType(profile.authType || 'password');
-    setPassword(profile.password || '');
-    setPrivateKey(profile.privateKey || '');
+    setDeploymentMode(profile.deploymentMode || (profile.synapseNode || profile.databaseNode || profile.elementNode ? 'distributed' : 'standalone'));
+    
+    // Synapse Node / Primary
+    const synNode = profile.synapseNode || profile;
+    setHost(synNode.host || profile.host || '');
+    setPort(synNode.port || profile.port || 22);
+    setUsername(synNode.username || profile.username || 'root');
+    setAuthType(synNode.authType || profile.authType || 'password');
+    setPassword(synNode.password || profile.password || '');
+    setPrivateKey(synNode.privateKey || profile.privateKey || '');
+    setServicePort(synNode.servicePort || 8008);
+
+    // Database Node
+    const dbNode = profile.databaseNode;
+    if (dbNode) {
+      setDbNodeHost(dbNode.host || '');
+      setDbNodePort(dbNode.port || 22);
+      setDbNodeUsername(dbNode.username || 'root');
+      setDbNodeAuthType(dbNode.authType || 'password');
+      setDbNodePassword(dbNode.password || '');
+      setDbNodePrivateKey(dbNode.privateKey || '');
+      setDbNodeServicePort(dbNode.servicePort || 5432);
+    } else {
+      setDbNodeHost(profile.dbHost || '');
+      setDbNodePort(22);
+      setDbNodeUsername('root');
+      setDbNodeAuthType('password');
+      setDbNodePassword('');
+      setDbNodePrivateKey('');
+      setDbNodeServicePort(5432);
+    }
+
+    // Element Node
+    const elemNode = profile.elementNode;
+    if (elemNode) {
+      setElemNodeHost(elemNode.host || '');
+      setElemNodePort(elemNode.port || 22);
+      setElemNodeUsername(elemNode.username || 'root');
+      setElemNodeAuthType(elemNode.authType || 'password');
+      setElemNodePassword(elemNode.password || '');
+      setElemNodePrivateKey(elemNode.privateKey || '');
+      setElemNodeServicePort(elemNode.servicePort || 80);
+      setElemNodeWebPath(elemNode.webPath || '/var/www/element');
+    } else {
+      setElemNodeHost('');
+      setElemNodePort(22);
+      setElemNodeUsername('root');
+      setElemNodeAuthType('password');
+      setElemNodePassword('');
+      setElemNodePrivateKey('');
+      setElemNodeServicePort(80);
+      setElemNodeWebPath('/var/www/element');
+    }
+
     setDbHost(profile.dbHost || 'localhost');
     setDbPort(profile.dbPort || 5432);
     setDbName(profile.dbName || 'synapse');
@@ -654,7 +887,7 @@ export default function ConnectionManager({
   };
 
   const handleDeleteProfile = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent selection
+    e.stopPropagation();
     if (id === 'local') {
       showToast('error', 'Cannot delete the local system profile.');
       return;
@@ -704,7 +937,8 @@ export default function ConnectionManager({
           ssh: data.ssh,
           db: data.db,
           api: data.api,
-          error: data.dbError || data.apiError
+          error: data.dbError || data.apiError || data.error,
+          clusterNodes: data.clusterNodes
         }
       }));
       setTestingId(null);
@@ -712,7 +946,7 @@ export default function ConnectionManager({
         setAdminAccessToken(data.adminAccessToken);
       }
       if (data.ssh && data.db && data.api) {
-        showToast('success', `SSH, Database, and Matrix API connection to ${profile.name} are fully healthy!`);
+        showToast('success', `All services & cluster nodes for ${profile.name} are fully healthy!`);
       } else if (data.ssh && data.db && !data.api) {
         showToast('error', `SSH and Database are active, but Matrix API test failed: ${data.apiError || 'API unreachable'}`);
       } else if (data.ssh && !data.db) {
@@ -745,16 +979,60 @@ export default function ConnectionManager({
     setIsTestingForm(true);
     setFormTestResult(null);
 
+    const synapseNode: ServerNodeConfig = {
+      host: host.trim(),
+      port: Number(port) || 22,
+      username: username.trim(),
+      authType,
+      password: authType === 'password' ? password : '',
+      privateKey: authType === 'key' ? privateKey : '',
+      servicePort: Number(servicePort) || 8008
+    };
+
+    let databaseNode: ServerNodeConfig | undefined = undefined;
+    if (deploymentMode === 'distributed') {
+      databaseNode = {
+        host: dbNodeHost.trim() || dbHost.trim() || host.trim(),
+        port: Number(dbNodePort) || 22,
+        username: dbNodeUsername.trim() || 'root',
+        authType: dbNodeAuthType,
+        password: dbNodeAuthType === 'password' ? dbNodePassword : '',
+        privateKey: dbNodeAuthType === 'key' ? dbNodePrivateKey : '',
+        servicePort: Number(dbNodeServicePort) || 5432,
+        dbName,
+        dbUser,
+        dbPass
+      };
+    }
+
+    let elementNode: ServerNodeConfig | undefined = undefined;
+    if (deploymentMode === 'distributed') {
+      elementNode = {
+        host: elemNodeHost.trim() || host.trim(),
+        port: Number(elemNodePort) || 22,
+        username: elemNodeUsername.trim() || 'root',
+        authType: elemNodeAuthType,
+        password: elemNodeAuthType === 'password' ? elemNodePassword : '',
+        privateKey: elemNodeAuthType === 'key' ? elemNodePrivateKey : '',
+        servicePort: Number(elemNodeServicePort) || 80,
+        webPath: elemNodeWebPath
+      };
+    }
+
     const tempProfile: any = {
       id: editingId || 'temp-test',
       name: name || 'Test Server',
+      deploymentMode,
       host,
       port,
       username,
       authType,
       password,
       privateKey,
-      dbHost,
+      synapseNode,
+      databaseNode,
+      elementNode,
+      dbHost: deploymentMode === 'distributed' && dbNodeHost ? dbNodeHost.trim() : (dbHost.trim() || 'localhost'),
       dbPort,
       dbName,
       dbUser,
@@ -784,11 +1062,12 @@ export default function ConnectionManager({
         ssh: data.ssh,
         db: data.db,
         api: data.api,
-        error: data.dbError || data.apiError || data.error
+        error: data.dbError || data.apiError || data.error,
+        clusterNodes: data.clusterNodes
       });
       setIsTestingForm(false);
       if (isSuccess) {
-        showToast('success', 'SSH, Database, and Matrix API connection test passed!');
+        showToast('success', 'All cluster nodes, Database, and Matrix API tests passed!');
       } else if (data.ssh && !data.db) {
         showToast('error', `SSH connected, but Database test failed: ${data.dbError || 'Authentication failed'}`);
       } else if (data.ssh && data.db && !data.api) {
@@ -810,7 +1089,7 @@ export default function ConnectionManager({
     });
   };
 
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExportProfiles = () => {
     if (profiles.length === 0) {
@@ -852,10 +1131,10 @@ export default function ConnectionManager({
       const text = await file.text();
       const importedData = JSON.parse(text);
       const items = Array.isArray(importedData) ? importedData : [importedData];
-      const validProfiles = items.filter((item: any) => item && typeof item === 'object' && item.name && item.host);
+      const validProfiles = items.filter((item: any) => item && typeof item === 'object' && item.name && (item.host || item.synapseNode));
 
       if (validProfiles.length === 0) {
-        showToast('error', t.importError || 'Invalid JSON file structure. Must contain profile objects with name and host.');
+        showToast('error', t.importError || 'Invalid JSON file structure.');
         return;
       }
 
@@ -863,28 +1142,6 @@ export default function ConnectionManager({
       let failCount = 0;
 
       for (const profile of validProfiles) {
-        const payload = {
-          name: profile.name,
-          host: profile.host,
-          port: profile.port || 22,
-          username: profile.username || 'root',
-          authType: profile.authType || 'password',
-          password: profile.password || '',
-          privateKey: profile.privateKey || '',
-          dbHost: profile.dbHost || 'localhost',
-          dbPort: profile.dbPort || 5432,
-          dbName: profile.dbName || 'synapse',
-          dbUser: profile.dbUser || 'synapse_user',
-          dbPass: profile.dbPass || '',
-          configPath: profile.configPath || '/etc/matrix-stack.conf',
-          homeserverYamlPath: profile.homeserverYamlPath || '/etc/matrix-synapse/homeserver.yaml',
-          elementConfigPath: profile.elementConfigPath || '/var/www/element/config.json',
-          homeserverLogPath: profile.homeserverLogPath || '/var/log/matrix-synapse/homeserver.log',
-          adminUsername: profile.adminUsername || '',
-          adminPassword: profile.adminPassword || '',
-          adminAccessToken: profile.adminAccessToken || ''
-        };
-
         try {
           const res = await fetch('/api/connections', {
             method: 'POST',
@@ -892,7 +1149,7 @@ export default function ConnectionManager({
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${authToken}`
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(profile)
           });
 
           if (res.ok) {
@@ -919,12 +1176,32 @@ export default function ConnectionManager({
 
   const resetForm = () => {
     setName('');
+    setDeploymentMode('standalone');
     setHost('');
     setPort(22);
     setUsername('root');
     setAuthType('password');
     setPassword('');
     setPrivateKey('');
+    setServicePort(8008);
+
+    setDbNodeHost('');
+    setDbNodePort(22);
+    setDbNodeUsername('root');
+    setDbNodeAuthType('password');
+    setDbNodePassword('');
+    setDbNodePrivateKey('');
+    setDbNodeServicePort(5432);
+
+    setElemNodeHost('');
+    setElemNodePort(22);
+    setElemNodeUsername('root');
+    setElemNodeAuthType('password');
+    setElemNodePassword('');
+    setElemNodePrivateKey('');
+    setElemNodeServicePort(80);
+    setElemNodeWebPath('/var/www/element');
+
     setDbHost('localhost');
     setDbPort(5432);
     setDbName('synapse');
@@ -939,7 +1216,10 @@ export default function ConnectionManager({
     setAdminAccessToken('');
     setDbDetectionMessage(null);
     setShowAdminSettings(false);
+    setShowAdvanced(false);
     setEditingId(null);
+    setFormTestResult(null);
+    setActiveNodeTab('synapse');
   };
 
   return (
@@ -949,7 +1229,7 @@ export default function ConnectionManager({
         <div>
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-teal-500/10 text-teal-400 border border-teal-500/10">
-              <Globe className="w-6 h-6 animate-pulse" />
+              <Network className="w-6 h-6 animate-pulse" />
             </div>
             <div>
               <h1 className="text-2xl font-display font-bold text-white tracking-tight">{t.pageTitle}</h1>
@@ -990,7 +1270,15 @@ export default function ConnectionManager({
           </button>
 
           <button
-            onClick={() => setShowForm(!showForm)}
+            onClick={() => {
+              if (showForm) {
+                setShowForm(false);
+                resetForm();
+              } else {
+                resetForm();
+                setShowForm(true);
+              }
+            }}
             className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-teal-500 hover:bg-teal-600 text-white font-bold text-sm transition-all duration-300 hover:shadow-[0_0_20px_rgba(20,184,166,0.3)] hover:scale-[1.02]"
           >
             <Plus className="w-4 h-4" />
@@ -1000,11 +1288,11 @@ export default function ConnectionManager({
       </div>
 
       {showForm ? (
-        /* Create Connection Form */
-        <form onSubmit={handleCreateProfile} className="spatial-glass rounded-3xl p-6 border border-white/5 space-y-6 max-w-3xl mx-auto">
+        /* Create / Edit Connection Form */
+        <form onSubmit={handleCreateProfile} className="spatial-glass rounded-3xl p-6 border border-white/5 space-y-6 max-w-4xl mx-auto">
           <div className="border-b border-white/5 pb-4">
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
-              <Plus className="w-5 h-5 text-teal-400" />
+              <Layers className="w-5 h-5 text-teal-400" />
               {t.configureRemoteServer}
             </h3>
             <p className="text-xs text-slate-400 mt-1">
@@ -1012,12 +1300,13 @@ export default function ConnectionManager({
             </p>
           </div>
 
+          {/* Profile Name & Deployment Architecture Selector */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div>
+            <div className="md:col-span-2">
               <label className="block text-xs font-semibold text-slate-300 mb-2">{t.profileName}</label>
               <input
                 type="text"
-                placeholder="e.g. Tehran Matrix Cluster"
+                placeholder="e.g. Tehran Production Cluster"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 required
@@ -1025,99 +1314,445 @@ export default function ConnectionManager({
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
-                <label className="block text-xs font-semibold text-slate-300 mb-2">{t.hostIp}</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 192.168.1.50"
-                  value={host}
-                  onChange={e => setHost(e.target.value)}
-                  required
-                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">{t.port}</label>
-                <input
-                  type="number"
-                  placeholder="22"
-                  value={port}
-                  onChange={e => setPort(parseInt(e.target.value) || 22)}
-                  required
-                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-2">{t.sshUsername}</label>
-              <input
-                type="text"
-                placeholder="root"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                required
-                className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-2">{t.authType}</label>
-              <div className="grid grid-cols-2 gap-2 mt-1">
-                <button
-                  type="button"
-                  onClick={() => setAuthType('password')}
-                  className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
-                    authType === 'password'
-                      ? 'bg-teal-500/10 border-teal-500 text-teal-400'
-                      : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+            {/* Architecture Mode Selector */}
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-slate-300 mb-2">{t.deploymentMode}</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div 
+                  onClick={() => setDeploymentMode('standalone')}
+                  className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                    deploymentMode === 'standalone'
+                      ? 'bg-teal-500/15 border-teal-500 shadow-[0_0_20px_rgba(20,184,166,0.15)] ring-1 ring-teal-500/30'
+                      : 'bg-white/5 border-white/10 hover:border-white/20'
                   }`}
                 >
-                  {t.passwordLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAuthType('key')}
-                  className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
-                    authType === 'key'
-                      ? 'bg-teal-500/10 border-teal-500 text-teal-400'
-                      : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`p-2 rounded-xl ${deploymentMode === 'standalone' ? 'bg-teal-500 text-white' : 'bg-white/10 text-slate-400'}`}>
+                      <Server className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white">{t.standaloneMode}</h4>
+                      <span className="text-[11px] text-teal-300 font-mono">1 Server VPS</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    {t.standaloneModeDesc}
+                  </p>
+                </div>
+
+                <div 
+                  onClick={() => setDeploymentMode('distributed')}
+                  className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                    deploymentMode === 'distributed'
+                      ? 'bg-indigo-500/15 border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.15)] ring-1 ring-indigo-500/30'
+                      : 'bg-white/5 border-white/10 hover:border-white/20'
                   }`}
                 >
-                  {t.privateKeyLabel}
-                </button>
-              </div>
-            </div>
-
-            {authType === 'password' ? (
-              <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-slate-300 mb-2">{t.sshPassword}</label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    placeholder="••••••••••••"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-xl pl-10 pr-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
-                  />
-                  <Key className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`p-2 rounded-xl ${deploymentMode === 'distributed' ? 'bg-indigo-500 text-white' : 'bg-white/10 text-slate-400'}`}>
+                      <Network className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white">{t.distributedMode}</h4>
+                      <span className="text-[11px] text-indigo-300 font-mono">3 Independent Nodes</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    {t.distributedModeDesc}
+                  </p>
                 </div>
               </div>
-            ) : (
-              <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-slate-300 mb-2">{t.sshPrivateKeyContent}</label>
-                <textarea
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"
-                  value={privateKey}
-                  onChange={e => setPrivateKey(e.target.value)}
-                  className="w-full h-32 bg-white border border-slate-300 rounded-xl p-4 text-xs font-mono text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
-                />
-              </div>
-            )}
+            </div>
           </div>
 
-{/* Smart Detect DB Info Banner & Action */}
+          {/* Distributed Node Selector Tabs (when in distributed mode) */}
+          {deploymentMode === 'distributed' && (
+            <div className="space-y-4 pt-2">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <span className="text-xs font-bold text-slate-300 flex items-center gap-2">
+                  <Network className="w-4 h-4 text-indigo-400" />
+                  Configure Cluster Server Nodes
+                </span>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  Separate IPs, SSH credentials & ports
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 p-1.5 rounded-2xl bg-black/20 border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setActiveNodeTab('synapse')}
+                  className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                    activeNodeTab === 'synapse'
+                      ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30 ring-1 ring-purple-400/50'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Cpu className="w-4 h-4" />
+                  <span>{t.synapseNodeTab}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveNodeTab('database')}
+                  className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                    activeNodeTab === 'database'
+                      ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 ring-1 ring-emerald-400/50'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Database className="w-4 h-4" />
+                  <span>{t.databaseNodeTab}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveNodeTab('element')}
+                  className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                    activeNodeTab === 'element'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/50'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Globe className="w-4 h-4" />
+                  <span>{t.elementNodeTab}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 1: SYNAPSE HOMESERVER NODE */}
+          {(deploymentMode === 'standalone' || activeNodeTab === 'synapse') && (
+            <div className="space-y-5 p-5 rounded-2xl bg-white/[0.02] border border-white/10">
+              <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                <h4 className="text-sm font-bold text-purple-400 flex items-center gap-2">
+                  <Cpu className="w-4 h-4" />
+                  {deploymentMode === 'distributed' ? 'Synapse Homeserver Server (Host / SSH)' : 'Server SSH Connection'}
+                </h4>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  Port 8008 Matrix API & SSH
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="grid grid-cols-3 gap-3 md:col-span-2">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">{t.hostIp}</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 192.168.1.50 or synapse.domain.com"
+                      value={host}
+                      onChange={e => setHost(e.target.value)}
+                      required
+                      className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">{t.port}</label>
+                    <input
+                      type="number"
+                      placeholder="22"
+                      value={port}
+                      onChange={e => setPort(parseInt(e.target.value) || 22)}
+                      required
+                      className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-2">{t.sshUsername}</label>
+                  <input
+                    type="text"
+                    placeholder="root"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    required
+                    className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-2">{t.authType}</label>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setAuthType('password')}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
+                        authType === 'password'
+                          ? 'bg-teal-500/10 border-teal-500 text-teal-400'
+                          : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+                      }`}
+                    >
+                      {t.passwordLabel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAuthType('key')}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
+                        authType === 'key'
+                          ? 'bg-teal-500/10 border-teal-500 text-teal-400'
+                          : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+                      }`}
+                    >
+                      {t.privateKeyLabel}
+                    </button>
+                  </div>
+                </div>
+
+                {authType === 'password' ? (
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">{t.sshPassword}</label>
+                    <div className="relative">
+                      <input
+                        type="password"
+                        placeholder="••••••••••••"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-xl pl-10 pr-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                      />
+                      <Key className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">{t.sshPrivateKeyContent}</label>
+                    <textarea
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"
+                      value={privateKey}
+                      onChange={e => setPrivateKey(e.target.value)}
+                      className="w-full h-28 bg-white border border-slate-300 rounded-xl p-4 text-xs font-mono text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: POSTGRESQL DATABASE NODE */}
+          {deploymentMode === 'distributed' && activeNodeTab === 'database' && (
+            <div className="space-y-5 p-5 rounded-2xl bg-white/[0.02] border border-white/10">
+              <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                <h4 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  PostgreSQL Database Server (Host / SSH & Port 5432)
+                </h4>
+                <button
+                  type="button"
+                  onClick={handleCopyCredentialsToDbNode}
+                  className="flex items-center gap-1.5 text-xs text-teal-400 hover:text-teal-300 font-bold bg-teal-500/10 px-3 py-1.5 rounded-lg border border-teal-500/20"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  {t.copyFromSynapse}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="grid grid-cols-3 gap-3 md:col-span-2">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">DB Server Host / IP *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 192.168.1.60 or db.internal.lan"
+                      value={dbNodeHost}
+                      onChange={e => {
+                        setDbNodeHost(e.target.value);
+                        setDbHost(e.target.value);
+                      }}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">{t.port}</label>
+                    <input
+                      type="number"
+                      placeholder="22"
+                      value={dbNodePort}
+                      onChange={e => setDbNodePort(parseInt(e.target.value) || 22)}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-2">SSH Username (DB Node)</label>
+                  <input
+                    type="text"
+                    placeholder="root"
+                    value={dbNodeUsername}
+                    onChange={e => setDbNodeUsername(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-2">DB Node Auth Type</label>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setDbNodeAuthType('password')}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
+                        dbNodeAuthType === 'password'
+                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400'
+                          : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+                      }`}
+                    >
+                      {t.passwordLabel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDbNodeAuthType('key')}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
+                        dbNodeAuthType === 'key'
+                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400'
+                          : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+                      }`}
+                    >
+                      {t.privateKeyLabel}
+                    </button>
+                  </div>
+                </div>
+
+                {dbNodeAuthType === 'password' ? (
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">SSH Password (DB Node)</label>
+                    <div className="relative">
+                      <input
+                        type="password"
+                        placeholder="••••••••••••"
+                        value={dbNodePassword}
+                        onChange={e => setDbNodePassword(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-xl pl-10 pr-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                      />
+                      <Key className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">SSH Private Key (DB Node)</label>
+                    <textarea
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"
+                      value={dbNodePrivateKey}
+                      onChange={e => setDbNodePrivateKey(e.target.value)}
+                      className="w-full h-28 bg-white border border-slate-300 rounded-xl p-4 text-xs font-mono text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: ELEMENT WEB CLIENT NODE */}
+          {deploymentMode === 'distributed' && activeNodeTab === 'element' && (
+            <div className="space-y-5 p-5 rounded-2xl bg-white/[0.02] border border-white/10">
+              <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                <h4 className="text-sm font-bold text-blue-400 flex items-center gap-2">
+                  <Globe className="w-4 h-4" />
+                  Element Web Server (Host / SSH & Nginx Web Server)
+                </h4>
+                <button
+                  type="button"
+                  onClick={handleCopyCredentialsToElemNode}
+                  className="flex items-center gap-1.5 text-xs text-teal-400 hover:text-teal-300 font-bold bg-teal-500/10 px-3 py-1.5 rounded-lg border border-teal-500/20"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  {t.copyFromSynapse}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="grid grid-cols-3 gap-3 md:col-span-2">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">Element Web Host / IP *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 192.168.1.70 or chat.domain.com"
+                      value={elemNodeHost}
+                      onChange={e => setElemNodeHost(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">{t.port}</label>
+                    <input
+                      type="number"
+                      placeholder="22"
+                      value={elemNodePort}
+                      onChange={e => setElemNodePort(parseInt(e.target.value) || 22)}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-2">SSH Username (Element Node)</label>
+                  <input
+                    type="text"
+                    placeholder="root"
+                    value={elemNodeUsername}
+                    onChange={e => setElemNodeUsername(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-2">Element Node Auth Type</label>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setElemNodeAuthType('password')}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
+                        elemNodeAuthType === 'password'
+                          ? 'bg-blue-500/10 border-blue-500 text-blue-400'
+                          : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+                      }`}
+                    >
+                      {t.passwordLabel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setElemNodeAuthType('key')}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all ${
+                        elemNodeAuthType === 'key'
+                          ? 'bg-blue-500/10 border-blue-500 text-blue-400'
+                          : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+                      }`}
+                    >
+                      {t.privateKeyLabel}
+                    </button>
+                  </div>
+                </div>
+
+                {elemNodeAuthType === 'password' ? (
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">SSH Password (Element Node)</label>
+                    <div className="relative">
+                      <input
+                        type="password"
+                        placeholder="••••••••••••"
+                        value={elemNodePassword}
+                        onChange={e => setElemNodePassword(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-xl pl-10 pr-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                      />
+                      <Key className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-300 mb-2">SSH Private Key (Element Node)</label>
+                    <textarea
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"
+                      value={elemNodePrivateKey}
+                      onChange={e => setElemNodePrivateKey(e.target.value)}
+                      className="w-full h-28 bg-white border border-slate-300 rounded-xl p-4 text-xs font-mono text-slate-900 focus:outline-none focus:border-teal-500 transition-colors placeholder-slate-400"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Smart Detect DB Info Banner */}
           <div className={`p-4 rounded-2xl border transition-all ${
             isLightMode 
               ? 'bg-gradient-to-r from-teal-50 to-emerald-50 border-teal-200 shadow-sm' 
@@ -1201,7 +1836,7 @@ export default function ConnectionManager({
             )}
           </div>
 
-          {/* Collapsible Advanced Settings (Postgres Connection details & File Paths) */}
+          {/* Collapsible Advanced Settings (PostgreSQL Connection details & File Paths) */}
           <div className="border-t border-white/5 pt-4">
             <button
               type="button"
@@ -1214,15 +1849,15 @@ export default function ConnectionManager({
 
             {showAdvanced && (
               <div className="space-y-6 mt-4 p-5 rounded-2xl bg-white/[0.03] border border-white/10 shadow-2xl backdrop-blur-md">
-                {/* Remote PostgreSQL Database parameters */}
+                {/* PostgreSQL Database parameters */}
                 <div>
                   <h4 className="text-sm font-bold text-teal-400 flex items-center gap-2 mb-4">
                     <Database className="w-4 h-4 text-teal-400" />
-                    Remote PostgreSQL Parameters
+                    PostgreSQL Authentication & Host Details
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1.5">DB Host (Local to Remote VPS)</label>
+                      <label className="block text-xs font-medium text-slate-300 mb-1.5">DB Host (Local to Synapse or Remote IP)</label>
                       <input
                         type="text"
                         value={dbHost}
@@ -1372,25 +2007,14 @@ export default function ConnectionManager({
                       />
                     </div>
                   </div>
-
-                  <div className="text-xs text-slate-300 mt-5 leading-relaxed bg-teal-500/10 p-4 rounded-xl border border-teal-500/20 space-y-1.5">
-                    <p className="font-semibold text-teal-400 flex items-center gap-1.5">
-                      <span>💡</span> Admin Username Format Guide
-                    </p>
-                    <p className="text-slate-300">
-                      You can enter the raw username (e.g., <code className="bg-slate-800 text-teal-300 px-1.5 py-0.5 rounded font-mono text-[11px]">admin</code>) or the full Matrix ID (e.g., <code className="bg-slate-800 text-teal-300 px-1.5 py-0.5 rounded font-mono text-[11px]">@admin:domain.com</code>).
-                    </p>
-                    <p className="text-slate-400 text-[11px]">
-                      The specified user must have administrator rights on the target Synapse home server to enable real-time user management, rooms administration, and custom metrics collection.
-                    </p>
-                  </div>
                 </div>
               </div>
             )}
           </div>
 
+          {/* Test Feedback */}
           {formTestResult && (
-            <div className={`p-4 rounded-xl border text-xs space-y-1.5 ${
+            <div className={`p-4 rounded-xl border text-xs space-y-2 ${
               formTestResult.success 
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' 
                 : 'bg-rose-500/10 border-rose-500/20 text-rose-300'
@@ -1398,14 +2022,29 @@ export default function ConnectionManager({
               <div className="flex items-center justify-between font-bold">
                 <span className="flex items-center gap-1.5">
                   {formTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <AlertCircle className="w-4 h-4 text-rose-400" />}
-                  Test Result: {formTestResult.success ? 'All Services Reachable' : 'Connection Failed'}
+                  Test Result: {formTestResult.success ? 'All Services & Nodes Reachable' : 'Connection Test Issues'}
                 </span>
                 <span className="text-[11px] font-mono opacity-80">
                   SSH: {formTestResult.ssh ? 'OK' : 'FAIL'} | DB: {formTestResult.db ? 'OK' : 'FAIL'} | API: {formTestResult.api ? 'OK' : 'FAIL'}
                 </span>
               </div>
+              
+              {formTestResult.clusterNodes && formTestResult.clusterNodes.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-white/10">
+                  {formTestResult.clusterNodes.map(cn => (
+                    <div key={cn.role} className="p-2 rounded-lg bg-black/20 border border-white/5 flex items-center justify-between">
+                      <span className="font-semibold uppercase text-[10px]">{cn.role} Node:</span>
+                      <span className={`text-[10px] font-bold flex items-center gap-1 ${cn.ssh ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {cn.ssh ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                        {cn.ssh ? 'Online' : 'Failed'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {formTestResult.error && (
-                <p className="text-[11px] font-mono leading-relaxed opacity-90 break-words">
+                <p className="text-[11px] font-mono leading-relaxed opacity-90 break-words pt-1">
                   Error Details: {formTestResult.error}
                 </p>
               )}
@@ -1420,13 +2059,13 @@ export default function ConnectionManager({
               className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 font-bold text-xs transition-all"
             >
               <RefreshCw className={`w-4 h-4 ${isTestingForm ? 'animate-spin' : ''}`} />
-              {isTestingForm ? 'Testing Connection...' : 'Test Connection Credentials'}
+              {isTestingForm ? 'Testing Connectivity...' : t.testAllNodes}
             </button>
 
             <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
               <button
                 type="button"
-                onClick={() => { setShowForm(false); resetForm(); setFormTestResult(null); }}
+                onClick={() => { setShowForm(false); resetForm(); }}
                 className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-sm transition-colors"
               >
                 {t.cancel}
@@ -1441,7 +2080,7 @@ export default function ConnectionManager({
           </div>
         </form>
       ) : (
-        /* Profiles Cards List grid */
+        /* Profiles Cards List Grid */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {isLoading ? (
             <div className="col-span-2 text-center py-12">
@@ -1460,6 +2099,7 @@ export default function ConnectionManager({
             profiles.map(profile => {
               const isActive = profile.isActive;
               const isLocal = profile.id === 'local';
+              const isDistributed = profile.deploymentMode === 'distributed';
               const testResult = testResults[profile.id];
               const isTesting = testingId === profile.id;
 
@@ -1499,21 +2139,28 @@ export default function ConnectionManager({
                     <div className="flex items-start gap-4 mb-4">
                       <div className={`p-3 rounded-2xl border transition-colors duration-300 ${
                         isActive 
-                          ? 'bg-teal-500/10 text-teal-500 border-teal-500/20' 
+                          ? isDistributed ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' : 'bg-teal-500/10 text-teal-500 border-teal-500/20' 
                           : isLightMode
                             ? 'bg-slate-100 text-slate-500 border-slate-200'
                             : 'bg-white/5 text-slate-400 border-white/5'
                       }`}>
-                        {isLocal ? <Server className="w-6 h-6" /> : <Globe className="w-6 h-6" />}
+                        {isLocal ? <Server className="w-6 h-6" /> : isDistributed ? <Network className="w-6 h-6 text-indigo-400" /> : <Globe className="w-6 h-6" />}
                       </div>
                       <div>
-                        <h3 className={`text-lg font-bold transition-colors duration-300 flex items-center gap-2 ${
-                          isActive
-                            ? isLightMode ? 'text-teal-700' : 'text-teal-400'
-                            : isLightMode ? 'text-slate-800 group-hover:text-teal-600' : 'text-white group-hover:text-teal-400'
-                        }`}>
-                          {profile.name}
-                        </h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className={`text-lg font-bold transition-colors duration-300 ${
+                            isActive
+                              ? isLightMode ? 'text-teal-700' : 'text-teal-400'
+                              : isLightMode ? 'text-slate-800 group-hover:text-teal-600' : 'text-white group-hover:text-teal-400'
+                          }`}>
+                            {profile.name}
+                          </h3>
+                          {isDistributed && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              3 Nodes
+                            </span>
+                          )}
+                        </div>
                         <p className={`text-xs font-mono mt-1 ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
                           {isLocal ? 'local-loopback' : `${profile.username}@${profile.host}:${profile.port}`}
                         </p>
@@ -1524,23 +2171,52 @@ export default function ConnectionManager({
                     <div className={`space-y-2.5 border-t pt-4 transition-colors duration-300 ${isLightMode ? 'border-slate-100' : 'border-white/5'}`}>
                       <div className="flex items-center justify-between text-xs">
                         <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>{t.connectionType}</span>
-                        <span className={`font-semibold uppercase ${isLightMode ? 'text-slate-700' : 'text-slate-300'}`}>{isLocal ? t.internalSandbox : t.remoteSsh}</span>
+                        <span className={`font-semibold uppercase text-[11px] ${
+                          isDistributed ? 'text-indigo-400 font-bold' : isLightMode ? 'text-slate-700' : 'text-slate-300'
+                        }`}>
+                          {isLocal ? t.internalSandbox : isDistributed ? t.distributedCluster : t.remoteSsh}
+                        </span>
                       </div>
                       
                       {!isLocal && (
                         <>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>{t.authMethod}</span>
-                            <span className={`font-mono flex items-center gap-1 ${isLightMode ? 'text-slate-700' : 'text-slate-300'}`}>
-                              <Lock className="w-3 h-3 text-slate-400" />
-                              {profile.authType === 'key' ? t.sshPrivateKey : t.passwordCredentials}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>{t.synapsePostgres}</span>
-                            <span className={`font-mono ${isLightMode ? 'text-slate-700' : 'text-slate-300'}`}>{profile.dbUser}@{profile.dbHost}:{profile.dbPort}</span>
-                          </div>
-
+                          {isDistributed ? (
+                            /* 3 Nodes Summary Matrix */
+                            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/5">
+                              <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-center">
+                                <span className="block text-[10px] font-bold text-purple-300">Synapse</span>
+                                <span className="text-[10px] font-mono text-slate-300 truncate block">
+                                  {profile.synapseNode?.host || profile.host}
+                                </span>
+                              </div>
+                              <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                                <span className="block text-[10px] font-bold text-emerald-300">PostgreSQL</span>
+                                <span className="text-[10px] font-mono text-slate-300 truncate block">
+                                  {profile.databaseNode?.host || profile.dbHost || 'Remote'}
+                                </span>
+                              </div>
+                              <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-center">
+                                <span className="block text-[10px] font-bold text-blue-300">Element</span>
+                                <span className="text-[10px] font-mono text-slate-300 truncate block">
+                                  {profile.elementNode?.host || profile.host}
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>{t.authMethod}</span>
+                                <span className={`font-mono flex items-center gap-1 ${isLightMode ? 'text-slate-700' : 'text-slate-300'}`}>
+                                  <Lock className="w-3 h-3 text-slate-400" />
+                                  {profile.authType === 'key' ? t.sshPrivateKey : t.passwordCredentials}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>{t.synapsePostgres}</span>
+                                <span className={`font-mono ${isLightMode ? 'text-slate-700' : 'text-slate-300'}`}>{profile.dbUser}@{profile.dbHost}:{profile.dbPort}</span>
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
                     </div>
@@ -1548,7 +2224,7 @@ export default function ConnectionManager({
 
                   {/* Footer Actions */}
                   <div className={`mt-6 pt-4 border-t flex items-center justify-between gap-2 transition-colors duration-300 ${isLightMode ? 'border-slate-100' : 'border-white/5'}`}>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2">
                       {!isLocal && (
                         <button
                           type="button"
@@ -1565,7 +2241,7 @@ export default function ConnectionManager({
                         </button>
                       )}
 
-                       {!isLocal && (
+                      {!isLocal && (
                         <button
                           type="button"
                           onClick={(e) => handleEditProfile(profile, e)}
@@ -1574,7 +2250,7 @@ export default function ConnectionManager({
                               ? 'hover:bg-slate-100 text-slate-500 hover:text-teal-600'
                               : 'hover:bg-teal-500/10 text-slate-400 hover:text-teal-400'
                           }`}
-                          title="Edit Connection"
+                          title="Edit Connection / Cluster"
                         >
                           <Edit className="w-4 h-4" />
                         </button>
@@ -1596,7 +2272,7 @@ export default function ConnectionManager({
                       )}
                     </div>
 
-                    {/* Test feedback */}
+                    {/* Test Feedback Badges */}
                     {testResult && (
                       <div className="flex flex-col items-end text-[10px]">
                         <div className="flex items-center gap-1 font-bold">

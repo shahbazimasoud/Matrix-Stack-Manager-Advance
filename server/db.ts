@@ -10,9 +10,39 @@ import { Client as SSHClient } from "ssh2";
 
 export const SANDBOX_DIR = path.join(process.cwd(), "sandbox");
 
+export interface ServerNodeConfig {
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  privateKey?: string;
+  authType: 'password' | 'key';
+  
+  // Specific configurations per node role
+  dbHost?: string;
+  dbPort?: number;
+  dbName?: string;
+  dbUser?: string;
+  dbPass?: string;
+  
+  elementConfigPath?: string;
+  webServerService?: string;
+  
+  homeserverYamlPath?: string;
+  configPath?: string;
+  homeserverLogPath?: string;
+  apiPort?: number;
+  adminUsername?: string;
+  adminPassword?: string;
+  adminAccessToken?: string;
+}
+
 export interface ConnectionProfile {
   id: string;
   name: string;
+  deploymentMode?: 'standalone' | 'distributed'; // 'standalone' (All-in-one) or 'distributed' (Split multi-server)
+
+  // Standalone / Primary Host (Synapse server in distributed mode)
   host: string;
   port: number;
   username: string;
@@ -20,6 +50,11 @@ export interface ConnectionProfile {
   privateKey?: string;
   authType: 'password' | 'key' | 'agent'; // Added 'agent' for Agent-based architecture
   
+  // Multi-Node Distributed Server Configurations (when deploymentMode === 'distributed')
+  synapseNode?: ServerNodeConfig;
+  databaseNode?: ServerNodeConfig;
+  elementNode?: ServerNodeConfig;
+
   // Agent-based fields
   status?: 'online' | 'offline' | 'pending';
   token?: string;
@@ -636,15 +671,95 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
   }
 }
 
-export async function executeSSHCommand(config: ConnectionProfile, cmd: string): Promise<string> {
+export function resolveNodeProfile(
+  config: ConnectionProfile,
+  targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig
+): ConnectionProfile {
+  if (!config) return config;
+  if (typeof targetNode === 'object' && targetNode !== null) {
+    return {
+      ...config,
+      id: `${config.id || "custom"}_custom_node`,
+      host: targetNode.host,
+      port: targetNode.port || 22,
+      username: targetNode.username || 'root',
+      password: targetNode.password,
+      privateKey: targetNode.privateKey,
+      authType: targetNode.authType || 'password',
+      dbHost: targetNode.dbHost || config.dbHost,
+      dbPort: targetNode.dbPort || config.dbPort,
+      dbName: targetNode.dbName || config.dbName,
+      dbUser: targetNode.dbUser || config.dbUser,
+      dbPass: targetNode.dbPass || config.dbPass,
+    };
+  }
+
+  if (config.deploymentMode === 'distributed') {
+    if (targetNode === 'database' && config.databaseNode && config.databaseNode.host) {
+      return {
+        ...config,
+        id: `${config.id}_db_node`,
+        host: config.databaseNode.host,
+        port: config.databaseNode.port || 22,
+        username: config.databaseNode.username || 'root',
+        password: config.databaseNode.password,
+        privateKey: config.databaseNode.privateKey,
+        authType: config.databaseNode.authType || 'password',
+        dbHost: config.databaseNode.dbHost || '127.0.0.1',
+        dbPort: config.databaseNode.dbPort || 5432,
+        dbName: config.databaseNode.dbName || 'synapse',
+        dbUser: config.databaseNode.dbUser || 'synapse_user',
+        dbPass: config.databaseNode.dbPass !== undefined ? config.databaseNode.dbPass : config.dbPass,
+      };
+    }
+    if (targetNode === 'element' && config.elementNode && config.elementNode.host) {
+      return {
+        ...config,
+        id: `${config.id}_element_node`,
+        host: config.elementNode.host,
+        port: config.elementNode.port || 22,
+        username: config.elementNode.username || 'root',
+        password: config.elementNode.password,
+        privateKey: config.elementNode.privateKey,
+        authType: config.elementNode.authType || 'password',
+        elementConfigPath: config.elementNode.elementConfigPath || config.elementConfigPath,
+      };
+    }
+    if ((targetNode === 'synapse' || targetNode === 'default' || !targetNode) && config.synapseNode && config.synapseNode.host) {
+      return {
+        ...config,
+        id: `${config.id}_synapse_node`,
+        host: config.synapseNode.host,
+        port: config.synapseNode.port || 22,
+        username: config.synapseNode.username || 'root',
+        password: config.synapseNode.password,
+        privateKey: config.synapseNode.privateKey,
+        authType: config.synapseNode.authType || 'password',
+        adminUsername: config.synapseNode.adminUsername || config.adminUsername,
+        adminPassword: config.synapseNode.adminPassword || config.adminPassword,
+        adminAccessToken: config.synapseNode.adminAccessToken || config.adminAccessToken,
+        homeserverYamlPath: config.synapseNode.homeserverYamlPath || config.homeserverYamlPath,
+      };
+    }
+  }
+
+  return config;
+}
+
+export async function executeSSHCommand(
+  config: ConnectionProfile,
+  cmd: string,
+  targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig
+): Promise<string> {
+  const targetConfig = resolveNodeProfile(config, targetNode);
   const attemptExecute = async (isRetry = false): Promise<string> => {
     let conn: SSHClient;
     try {
-      conn = await getOrCreateSSHClient(config);
+      conn = await getOrCreateSSHClient(targetConfig);
     } catch (err: any) {
       if (!isRetry) {
-        sshPool.delete(getSSHKey(config));
-        conn = await getOrCreateSSHClient(config);
+        sshPool.delete(getSSHKey(targetConfig));
+        conn = await getOrCreateSSHClient(targetConfig);
       } else {
         throw err;
       }
@@ -653,7 +768,7 @@ export async function executeSSHCommand(config: ConnectionProfile, cmd: string):
     return new Promise((resolve, reject) => {
       conn.exec(cmd, async (err, stream) => {
         if (err) {
-          sshPool.delete(getSSHKey(config));
+          sshPool.delete(getSSHKey(targetConfig));
           if (!isRetry) {
             try {
               const retryRes = await attemptExecute(true);
@@ -687,15 +802,21 @@ export async function executeSSHCommand(config: ConnectionProfile, cmd: string):
 }
 
 // Dedicated helper to upload local file to remote server via SFTP over SSH connection
-export async function uploadSSHFile(config: ConnectionProfile, localFilePath: string, remoteFilePath: string): Promise<void> {
+export async function uploadSSHFile(
+  config: ConnectionProfile,
+  localFilePath: string,
+  remoteFilePath: string,
+  targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig
+): Promise<void> {
+  const targetConfig = resolveNodeProfile(config, targetNode);
   const attemptUpload = async (isRetry = false): Promise<void> => {
     let conn: SSHClient;
     try {
-      conn = await getOrCreateSSHClient(config);
+      conn = await getOrCreateSSHClient(targetConfig);
     } catch (err: any) {
       if (!isRetry) {
-        sshPool.delete(getSSHKey(config));
-        conn = await getOrCreateSSHClient(config);
+        sshPool.delete(getSSHKey(targetConfig));
+        conn = await getOrCreateSSHClient(targetConfig);
       } else {
         throw err;
       }
@@ -704,7 +825,7 @@ export async function uploadSSHFile(config: ConnectionProfile, localFilePath: st
     return new Promise((resolve, reject) => {
       conn.sftp((errSftp, sftp) => {
         if (errSftp) {
-          sshPool.delete(getSSHKey(config));
+          sshPool.delete(getSSHKey(targetConfig));
           if (!isRetry) {
             return attemptUpload(true).then(resolve).catch(reject);
           }
@@ -717,7 +838,7 @@ export async function uploadSSHFile(config: ConnectionProfile, localFilePath: st
               const fileBuf = fs.readFileSync(localFilePath);
               sftp.writeFile(remoteFilePath, fileBuf, { mode: 0o644 }, (errWrite) => {
                 if (errWrite) {
-                  sshPool.delete(getSSHKey(config));
+                  sshPool.delete(getSSHKey(targetConfig));
                   if (!isRetry) {
                     return attemptUpload(true).then(resolve).catch(reject);
                   }
@@ -823,16 +944,17 @@ export function cleanAndParseJSON(text: string, defaultValue: any = null): any {
 const remoteDbConfigCache = new Map<string, { dbUser: string; dbPass: string; dbName: string; dbHost: string; dbPort: number }>();
 
 export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: string, params: any[] = []): Promise<any[]> {
-  const cacheKey = config.id || config.host || "default";
+  const targetConfig = resolveNodeProfile(config, 'database');
+  const cacheKey = targetConfig.id || targetConfig.host || "default";
   const interpolatedSql = interpolateQueryParams(sqlQuery, params);
   const trimmedSql = interpolatedSql.trim();
   const isWriteQuery = /^\s*(insert|update|delete|create|drop|alter|truncate)\b/i.test(trimmedSql);
   
-  let dbUser = config.dbUser;
-  let dbPass = config.dbPass;
-  let dbName = config.dbName;
-  let dbHost = config.dbHost;
-  let dbPort = config.dbPort;
+  let dbUser = targetConfig.dbUser;
+  let dbPass = targetConfig.dbPass;
+  let dbName = targetConfig.dbName;
+  let dbHost = targetConfig.dbHost;
+  let dbPort = targetConfig.dbPort;
 
   // Check in-memory cache first if DB credentials are not in config profile
   if ((!dbUser || !dbPass || !dbName) && remoteDbConfigCache.has(cacheKey)) {
@@ -847,8 +969,8 @@ export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: s
   // Dynamically load from /etc/matrix-stack.conf or homeserver.yaml if missing
   if (!dbUser || !dbPass || !dbName) {
     try {
-      const sudoPrefix = config.username === "root" ? "" : "sudo ";
-      const confRaw = await executeSSHCommand(config, `${sudoPrefix}cat /etc/matrix-stack.conf 2>/dev/null || true`);
+      const sudoPrefix = targetConfig.username === "root" ? "" : "sudo ";
+      const confRaw = await executeSSHCommand(targetConfig, `${sudoPrefix}cat /etc/matrix-stack.conf 2>/dev/null || true`);
       if (confRaw && confRaw.trim()) {
         const parsedConfig: any = {};
         confRaw.split("\n").forEach((line) => {
@@ -871,8 +993,8 @@ export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: s
 
     if (!dbUser || !dbPass || !dbName) {
       try {
-        const sudoPrefix = config.username === "root" ? "" : "sudo ";
-        const homeserverRaw = await executeSSHCommand(config, `${sudoPrefix}cat /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true`);
+        const sudoPrefix = targetConfig.username === "root" ? "" : "sudo ";
+        const homeserverRaw = await executeSSHCommand(targetConfig, `${sudoPrefix}cat /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true`);
         if (homeserverRaw && homeserverRaw.trim()) {
           const dbUserMatch = homeserverRaw.match(/user:\s*["']?([^"'\s]+)["']?/);
           const dbPassMatch = homeserverRaw.match(/password:\s*["']?([^"'\s]+)["']?/);
@@ -902,8 +1024,8 @@ export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: s
     }
   }
 
-  const hasExplicitPass = typeof config.dbPass === "string" && config.dbPass.length > 0;
-  const hasExplicitUser = typeof config.dbUser === "string" && config.dbUser.trim().length > 0;
+  const hasExplicitPass = typeof targetConfig.dbPass === "string" && targetConfig.dbPass.length > 0;
+  const hasExplicitUser = typeof targetConfig.dbUser === "string" && targetConfig.dbUser.trim().length > 0;
 
   dbUser = dbUser || "synapse_user";
   dbPass = dbPass || "";
@@ -939,7 +1061,7 @@ export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: s
     const combinedCmd = buildPsqlCommand(trimmedSql);
 
     try {
-      const output = await executeSSHCommand(config, combinedCmd);
+      const output = await executeSSHCommand(targetConfig, combinedCmd);
       if (output !== undefined && !output.includes("psql: error") && !output.includes("FATAL:") && !output.includes("Command failed") && !output.includes("password authentication failed")) {
         return [{ success: true, affectedRows: output.trim() }];
       } else {
@@ -957,7 +1079,7 @@ export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: s
     const combinedCmd = buildPsqlCommand(wrappedQuery);
 
     try {
-      const jsonStr = await executeSSHCommand(config, combinedCmd);
+      const jsonStr = await executeSSHCommand(targetConfig, combinedCmd);
       if (jsonStr !== undefined && !jsonStr.includes("psql: error") && !jsonStr.includes("FATAL:") && !jsonStr.includes("Command failed") && !jsonStr.includes("password authentication failed")) {
         const parsed = cleanAndParseJSON(jsonStr, null);
         if (parsed !== null) return parsed;
@@ -972,6 +1094,7 @@ export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: s
 }
 
 export async function queryRemotePostgresMulti(config: ConnectionProfile, queries: { sql: string, params?: any[] }[]): Promise<any[][]> {
+  const targetConfig = resolveNodeProfile(config, 'database');
   const wrappedQueries = queries.map(q => {
     const interpolatedSql = interpolateQueryParams(q.sql, q.params || []);
     const trimmedSql = interpolatedSql.trim();
@@ -987,11 +1110,11 @@ export async function queryRemotePostgresMulti(config: ConnectionProfile, querie
 
   const fullSql = wrappedQueries.join("\n");
   
-  const dbUser = config.dbUser || "synapse_user";
-  const dbPass = config.dbPass || "";
-  const dbName = config.dbName || "synapse";
-  const dbHost = config.dbHost || "localhost";
-  const dbPort = config.dbPort || 5432;
+  const dbUser = targetConfig.dbUser || "synapse_user";
+  const dbPass = targetConfig.dbPass || "";
+  const dbName = targetConfig.dbName || "synapse";
+  const dbHost = targetConfig.dbHost || "localhost";
+  const dbPort = targetConfig.dbPort || 5432;
   
   const escapedPass = dbPass.replace(/'/g, "'\\''");
   const escapedUser = dbUser.replace(/'/g, "'\\''");
@@ -1002,7 +1125,7 @@ export async function queryRemotePostgresMulti(config: ConnectionProfile, querie
   const cmd = `SQL=$(echo '${b64Sql}' | base64 -d); echo "$SQL" | PGPASSWORD='${escapedPass}' psql -h '${escapedHost}' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | PGPASSWORD='${escapedPass}' psql -h '127.0.0.1' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | sudo -u postgres psql -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | sudo psql -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`;
   
   try {
-    const stdout = await executeSSHCommand(config, cmd);
+    const stdout = await executeSSHCommand(targetConfig, cmd);
     const lines = stdout.trim().split("\n").filter(l => l.trim().length > 0);
     
     return lines.map(line => {
