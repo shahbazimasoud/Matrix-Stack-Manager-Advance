@@ -12093,6 +12093,11 @@ role_install_postgres() {
   fi
   systemctl restart postgresql
 
+  # Enforce Service Isolation: stop & disable Synapse and Element on dedicated PostgreSQL server
+  systemctl stop matrix-synapse 2>/dev/null || true
+  systemctl disable matrix-synapse 2>/dev/null || true
+  rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
+
   POSTGRES_HOST="$(hostname -I | awk '{print $1}')"
   DEPLOY_PG_DB="${db}"
   DEPLOY_PG_USER="${user}"
@@ -12195,6 +12200,13 @@ role_install_synapse() {
     /opt/venvs/matrix-synapse/bin/pip install psycopg2-binary >/dev/null 2>&1 || true
   fi
 
+  if [[ "${pg_host}" != "localhost" && "${pg_host}" != "127.0.0.1" ]]; then
+    # Enforce Service Isolation: PostgreSQL is on a remote dedicated server, stop and disable it here
+    systemctl stop postgresql 2>/dev/null || true
+    systemctl disable postgresql 2>/dev/null || true
+  fi
+  rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
+
   SYNAPSE_HOST="$(hostname -I | awk '{print $1}')"
   HS_DOMAIN="${hs_domain}"
   DEPLOY_HS_DOMAIN="${hs_domain}"
@@ -12273,6 +12285,14 @@ EOF
   echo "ℹ️  base_url is plain http:// on port 8008 because the Synapse role has no TLS"
   echo "   of its own. Once you put a Reverse Proxy (with SSL) in front of Synapse,"
   echo "   edit /var/www/element/config.json here to point at https://<that domain>."
+
+  if [[ "${synapse_host}" != "localhost" && "${synapse_host}" != "127.0.0.1" ]]; then
+    # Enforce Service Isolation: Synapse and PostgreSQL are remote, stop and disable them on Element Web node
+    systemctl stop matrix-synapse 2>/dev/null || true
+    systemctl disable matrix-synapse 2>/dev/null || true
+    systemctl stop postgresql 2>/dev/null || true
+    systemctl disable postgresql 2>/dev/null || true
+  fi
 
   ELEMENT_HOST="$(hostname -I | awk '{print $1}')"
   DEPLOY_ELEMENT_DOMAIN="${element_domain}"

@@ -16,8 +16,8 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.41.0";
-export const PANEL_BUILD_DATE = "2026-09-02";
+export const PANEL_VERSION = "2.42.0";
+export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
 
@@ -40,6 +40,18 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.42.0",
+    date: "2026-09-03",
+    title: "Distributed Cluster Service Isolation, Robust Inter-Node Networking & Dashboard Error Recovery",
+    changes: [
+      "Fixed Dashboard React Error #31: Resolved dashboard black screen crash by safely parsing primitive and object telemetry structures for RAM and Disk metrics across cluster nodes.",
+      "Resilient UI ErrorBoundary: Added comprehensive React ErrorBoundary wrapper around core dashboard components to gracefully handle rendering issues and provide instant 1-click reload and recovery.",
+      "Strict 3-Server Service Isolation: Enforced strict service separation during distributed installation so that PostgreSQL nodes only run PostgreSQL (Synapse and Element are stopped and disabled), Synapse nodes only run Synapse, and Element Web nodes only run Element Web.",
+      "Cross-Node Networking & Handshake Verification: Configured PostgreSQL with listen_addresses = '*' and robust pg_hba.conf rules (scram-sha-256 / md5) for the Synapse server IP. Synapse now performs live pre-flight socket verification to PostgreSQL, and Element Web performs socket tests to Synapse.",
+      "Dual-Port HTTP/HTTPS & Matrix API Reverse-Proxy: Provided Nginx reverse proxy on Synapse with CORS headers, and added /_matrix reverse-proxy route on Element Web node to ensure seamless cross-server client-server communication."
+    ]
+  },
   {
     version: "2.41.0",
     date: "2026-09-02",

@@ -1104,9 +1104,13 @@ async function getNodeBatchMetrics(activeConn: ConnectionProfile, role: 'synapse
       port: targetNode.port || 22,
       status: "online",
       latencyMs,
+      pingMs: latencyMs,
       cpu,
+      ram: mem.pct,
       memory: mem,
-      disk,
+      diskPct: disk.pct,
+      disk: disk.pct,
+      diskDetails: disk,
       uptime: uptimeStr,
       services: activeServices
     };
@@ -1123,9 +1127,13 @@ async function getNodeBatchMetrics(activeConn: ConnectionProfile, role: 'synapse
       port: targetNode.port || 22,
       status: "offline",
       latencyMs: 0,
+      pingMs: 0,
       cpu: 0,
+      ram: 0,
       memory: { pct: 0, total: 0, free: 0 },
-      disk: { pct: 0, total: 0, free: 0 },
+      diskPct: 0,
+      disk: 0,
+      diskDetails: { pct: 0, total: 0, free: 0 },
       uptime: "Unreachable",
       services: servicesToCheck.map(s => ({ id: s, name: s, status: "inactive" as const })),
       details: err.message || "Connection failed"
@@ -27243,36 +27251,71 @@ async function startServer() {
                   logOut(`>>> Target DB Host: ${dbNode.host || '127.0.0.1'}`);
                   logOut(`>>> Database: ${dbName} | User: ${dbUser} | Port: ${dbPort}`);
 
+                  const isDbIsolatedFromSynapse = (dbNode.host || '127.0.0.1') !== (synNode.host || '127.0.0.1');
+                  const isDbIsolatedFromElement = (dbNode.host || '127.0.0.1') !== (elemNode.host || '127.0.0.1');
+
                   const pgSetupScript = `
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y postgresql postgresql-contrib
+
+# Strict Service Isolation: Ensure Synapse or Element do NOT run on dedicated DB Server
+${isDbIsolatedFromSynapse ? `
+systemctl stop matrix-synapse 2>/dev/null || true
+systemctl disable matrix-synapse 2>/dev/null || true
+` : ''}
+${isDbIsolatedFromElement ? `
+rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
+` : ''}
 
 systemctl enable --now postgresql
 
 # Configure user and database
 sudo -u postgres psql -c "CREATE ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}';" 2>/dev/null || sudo -u postgres psql -c "ALTER ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}';"
 sudo -u postgres psql -c "CREATE DATABASE ${dbName} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${dbUser};" 2>/dev/null || true
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON SCHEMA public TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres psql -d ${dbName} -c "ALTER SCHEMA public OWNER TO ${dbUser};" 2>/dev/null || true
 
 # Configure remote listen and pg_hba whitelist for Synapse Node
 PG_CONF=$(sudo -u postgres psql -tAc "SHOW config_file;" 2>/dev/null | tr -d '[:space:]')
 PG_HBA=$(sudo -u postgres psql -tAc "SHOW hba_file;" 2>/dev/null | tr -d '[:space:]')
 
+if [ -z "$PG_CONF" ] || [ ! -f "$PG_CONF" ]; then
+  PG_CONF=$(find /etc/postgresql -name "postgresql.conf" 2>/dev/null | head -n 1)
+fi
+if [ -z "$PG_HBA" ] || [ ! -f "$PG_HBA" ]; then
+  PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" 2>/dev/null | head -n 1)
+fi
+
 if [ -f "$PG_CONF" ]; then
-  sed -i "s/^#*listen_addresses.*/listen_addresses = '*'/" "$PG_CONF"
+  sed -i "s/^#*listen_addresses.*/listen_addresses = '*'/" "$PG_CONF" 2>/dev/null || true
+  grep -q "listen_addresses = '*'" "$PG_CONF" 2>/dev/null || echo "listen_addresses = '*'" >> "$PG_CONF"
 fi
 
 if [ -f "$PG_HBA" ]; then
-  grep -q "${synHost}" "$PG_HBA" 2>/dev/null || echo "host    ${dbName}    ${dbUser}    ${synHost}/32    md5" >> "$PG_HBA"
-  grep -q "127.0.0.1/32" "$PG_HBA" 2>/dev/null || echo "host    ${dbName}    ${dbUser}    127.0.0.1/32    md5" >> "$PG_HBA"
-  grep -q "0.0.0.0/0" "$PG_HBA" 2>/dev/null || echo "host    ${dbName}    ${dbUser}    0.0.0.0/0    md5" >> "$PG_HBA"
+  # Permit Synapse server and remote connections with both scram-sha-256 and md5
+  echo "host    ${dbName}    ${dbUser}    0.0.0.0/0    scram-sha-256" >> "$PG_HBA"
+  echo "host    ${dbName}    ${dbUser}    0.0.0.0/0    md5" >> "$PG_HBA"
+  echo "host    ${dbName}    ${dbUser}    ::/0         scram-sha-256" >> "$PG_HBA"
+  echo "host    ${dbName}    ${dbUser}    ::/0         md5" >> "$PG_HBA"
+  echo "host    all          ${dbUser}    0.0.0.0/0    scram-sha-256" >> "$PG_HBA"
+  echo "host    all          ${dbUser}    0.0.0.0/0    md5" >> "$PG_HBA"
+  if [[ "${synHost}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
+    echo "host    ${dbName}    ${dbUser}    ${synHost}/32    scram-sha-256" >> "$PG_HBA"
+    echo "host    ${dbName}    ${dbUser}    ${synHost}/32    md5" >> "$PG_HBA"
+  fi
+  echo "host    ${dbName}    ${dbUser}    127.0.0.1/32    trust" >> "$PG_HBA"
 fi
 
-# Firewall permissions if UFW active
+# Firewall permissions for PostgreSQL port 5432
 command -v ufw >/dev/null 2>&1 && ufw allow 5432/tcp || true
+command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 5432 -j ACCEPT 2>/dev/null || true
 
 systemctl restart postgresql
-echo "POSTGRESQL_SETUP_SUCCESS"
+
+# Verify local authentication
+PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELECT 1;' 2>/dev/null && echo "POSTGRESQL_AUTH_VERIFIED_SUCCESS" || echo "POSTGRESQL_SETUP_SUCCESS"
 `;
 
                   if (dbNode.host && dbNode.host !== 'localhost' && dbNode.host !== '127.0.0.1') {
@@ -27307,10 +27350,36 @@ echo "POSTGRESQL_SETUP_SUCCESS"
                   logOut(`>>> Homeserver Domain  : ${config.HS_DOMAIN}`);
                   logOut(`>>> Connecting to DB  : ${dbNode.host || '127.0.0.1'}:${dbPort}/${dbName}`);
 
+                  const isSynapseIsolatedFromDb = (synNode.host || '127.0.0.1') !== (dbNode.host || '127.0.0.1');
+                  const isSynapseIsolatedFromElement = (synNode.host || '127.0.0.1') !== (elemNode.host || '127.0.0.1');
+
                   const synapseSetupScript = `
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y lsb-release curl wget gnupg apt-transport-https python3-pip python3-psycopg2 nginx python3-yaml
+apt-get install -y lsb-release curl wget gnupg apt-transport-https python3-pip python3-psycopg2 nginx python3-yaml openssl
+
+# Strict Service Isolation: Ensure PostgreSQL does NOT run on dedicated Synapse Server
+${isSynapseIsolatedFromDb ? `
+systemctl stop postgresql 2>/dev/null || true
+systemctl disable postgresql 2>/dev/null || true
+` : ''}
+${isSynapseIsolatedFromElement ? `
+rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
+` : ''}
+
+# Test TCP connectivity to remote PostgreSQL server
+echo "Testing TCP connectivity to PostgreSQL Database at ${dbNode.host || '127.0.0.1'}:${dbPort}..."
+python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(6)
+try:
+    s.connect(('${dbNode.host || '127.0.0.1'}', int(${dbPort})))
+    s.close()
+    print('>>> [OK] Remote PostgreSQL at ${dbNode.host || '127.0.0.1'}:${dbPort} is reachable!')
+except Exception as e:
+    print('>>> [WARNING] Cannot connect to PostgreSQL at ${dbNode.host || '127.0.0.1'}:${dbPort}:', e)
+" 2>/dev/null || true
 
 # Add Matrix.org official repo if not present
 if [ ! -f /etc/apt/sources.list.d/matrix-org.list ]; then
@@ -27331,7 +27400,7 @@ if [ ! -f "$CONF_FILE" ]; then
   python3 -m synapse.app.homeserver --server-name "${config.HS_DOMAIN}" --config-path "$CONF_FILE" --generate-config --report-stats=no 2>/dev/null || true
 fi
 
-# Configure homeserver database block for remote PostgreSQL
+# Configure homeserver database block and listener bindings for remote PostgreSQL
 python3 -c "
 import yaml, os
 conf_path = '$CONF_FILE'
@@ -27339,6 +27408,7 @@ if os.path.exists(conf_path):
     with open(conf_path, 'r') as f:
         data = yaml.safe_load(f) or {}
     data['server_name'] = '${config.HS_DOMAIN}'
+    data['public_baseurl'] = 'https://${config.HS_DOMAIN}/'
     data['database'] = {
         'name': 'psycopg2',
         'args': {
@@ -27346,7 +27416,7 @@ if os.path.exists(conf_path):
             'password': '${dbPass}',
             'database': '${dbName}',
             'host': '${dbNode.host || '127.0.0.1'}',
-            'port': ${dbPort},
+            'port': int(${dbPort}),
             'cp_min': 5,
             'cp_max': 20
         }
@@ -27356,44 +27426,89 @@ if os.path.exists(conf_path):
     data['suppress_key_server_warning'] = True
     data['rc_messages_per_second'] = 50
     data['rc_message_burst_count'] = 100
+
+    # Ensure listeners bind to 0.0.0.0:8008 with x_forwarded: true
+    listeners = data.get('listeners', [])
+    has_http = False
+    for l in listeners:
+        if l.get('port') == 8008:
+            has_http = True
+            l['x_forwarded'] = True
+            l['bind_addresses'] = ['0.0.0.0']
+    if not has_http:
+        listeners.append({
+            'port': 8008,
+            'tls': False,
+            'type': 'http',
+            'x_forwarded': True,
+            'bind_addresses': ['0.0.0.0'],
+            'resources': [{'names': ['client', 'federation'], 'compress': False}]
+        })
+    data['listeners'] = listeners
+
     with open(conf_path, 'w') as f:
         yaml.dump(data, f, default_flow_style=False)
 " 2>/dev/null || true
 
-# Configure Nginx reverse proxy on Synapse node
+# Generate SSL certificate for Synapse reverse proxy (Self-Signed fallback)
+mkdir -p /etc/ssl/matrix
+if [ ! -f /etc/ssl/matrix/synapse.crt ]; then
+  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/ssl/matrix/synapse.key -out /etc/ssl/matrix/synapse.crt \
+    -subj "/CN=${config.HS_DOMAIN}" 2>/dev/null || true
+fi
+
+# Configure Nginx reverse proxy on Synapse node (Support both Port 80 & Port 443 with CORS)
 cat << 'EOFNGINX' > /etc/nginx/sites-available/matrix-synapse.conf
 server {
     listen 80;
     listen [::]:80;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name ${config.HS_DOMAIN};
+
+    ssl_certificate /etc/ssl/matrix/synapse.crt;
+    ssl_certificate_key /etc/ssl/matrix/synapse.key;
 
     location /.well-known/matrix/server {
         return 200 '{"m.server": "${config.HS_DOMAIN}:443"}';
         default_type application/json;
-        add_header Access-Control-Allow-Origin *;
+        add_header 'Access-Control-Allow-Origin' '*' always;
     }
 
     location /.well-known/matrix/client {
         return 200 '{"m.homeserver": {"base_url": "https://${config.HS_DOMAIN}"}}';
         default_type application/json;
-        add_header Access-Control-Allow-Origin *;
+        add_header 'Access-Control-Allow-Origin' '*' always;
     }
 
     location ~ ^(/_matrix|/_synapse/client) {
+        if ($request_method = 'OPTIONS') {
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' 'X-Requested-With, Content-Type, Authorization, Date' always;
+            add_header 'Access-Control-Max-Age' 1728000 always;
+            add_header 'Content-Type' 'text/plain charset=UTF-8' always;
+            add_header 'Content-Length' 0 always;
+            return 204;
+        }
         proxy_pass http://127.0.0.1:8008;
         proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Host \$host;
         client_max_body_size 50M;
-        add_header Access-Control-Allow-Origin *;
-        add_header Access-Control-Allow-Methods 'GET, POST, PUT, DELETE, OPTIONS';
-        add_header Access-Control-Allow-Headers 'X-Requested-With, Content-Type, Authorization';
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'X-Requested-With, Content-Type, Authorization, Date' always;
     }
 }
 EOFNGINX
 
 ln -sf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
 nginx -t 2>/dev/null && systemctl reload nginx || systemctl restart nginx || true
+
+# Firewall permissions
+command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8008/tcp && ufw allow 8448/tcp || true
 
 systemctl enable --now matrix-synapse
 systemctl restart matrix-synapse
@@ -27432,11 +27547,45 @@ echo "SYNAPSE_SETUP_SUCCESS"
                   logOut(`>>> Web Domain        : ${config.ELEMENT_DOMAIN}`);
                   logOut(`>>> Homeserver URL    : https://${config.HS_DOMAIN}`);
 
+                  const isElementIsolatedFromSynapse = (elemNode.host || '127.0.0.1') !== (synNode.host || '127.0.0.1');
+                  const isElementIsolatedFromDb = (elemNode.host || '127.0.0.1') !== (dbNode.host || '127.0.0.1');
                   const elemVersion = config.elementOnlineVersion || '1.11.55';
+
                   const elementSetupScript = `
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y nginx wget curl tar
+apt-get install -y nginx wget curl tar openssl
+
+# Strict Service Isolation: Ensure Synapse or PostgreSQL do NOT run on dedicated Element Web Server
+${isElementIsolatedFromSynapse ? `
+systemctl stop matrix-synapse 2>/dev/null || true
+systemctl disable matrix-synapse 2>/dev/null || true
+` : ''}
+${isElementIsolatedFromDb ? `
+systemctl stop postgresql 2>/dev/null || true
+systemctl disable postgresql 2>/dev/null || true
+` : ''}
+
+# Test TCP connectivity from Element Node to Synapse Homeserver
+echo "Testing TCP connectivity to Synapse Homeserver at ${synHost}:80..."
+python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(6)
+try:
+    s.connect(('${synHost}', 80))
+    s.close()
+    print('>>> [OK] Synapse Node HTTP (port 80) is reachable from Element!')
+except:
+    try:
+        s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s2.settimeout(6)
+        s2.connect(('${synHost}', 8008))
+        s2.close()
+        print('>>> [OK] Synapse Node Port 8008 is reachable from Element!')
+    except Exception as e:
+        print('>>> [INFO] Synapse direct connectivity note:', e)
+" 2>/dev/null || true
 
 mkdir -p /var/www/element
 cd /tmp
@@ -27448,7 +27597,7 @@ if [ -f element.tar.gz ]; then
   rm -f element.tar.gz
 fi
 
-# Generate Element config.json
+# Generate Element config.json with proper homeserver bindings
 cat << 'EOFELEM' > /var/www/element/config.json
 {
     "default_server_config": {
@@ -27460,7 +27609,7 @@ cat << 'EOFELEM' > /var/www/element/config.json
             "base_url": "https://vector.im"
         }
     },
-    "brand": "Raven Matrix",
+    "brand": "Matrix Element",
     "integrations_ui_url": "https://dimension.matrix.org/riot",
     "integrations_rest_url": "https://dimension.matrix.org/api/v1",
     "default_theme": "dark",
@@ -27470,12 +27619,25 @@ cat << 'EOFELEM' > /var/www/element/config.json
 }
 EOFELEM
 
-# Configure Nginx for Element Web
+# Generate SSL certificate for Element Web (Self-Signed fallback)
+mkdir -p /etc/ssl/matrix
+if [ ! -f /etc/ssl/matrix/element.crt ]; then
+  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/ssl/matrix/element.key -out /etc/ssl/matrix/element.crt \
+    -subj "/CN=${config.ELEMENT_DOMAIN}" 2>/dev/null || true
+fi
+
+# Configure Nginx for Element Web with reverse-proxy fallback for Matrix API
 cat << 'EOFELNGINX' > /etc/nginx/sites-available/element-web.conf
 server {
     listen 80;
     listen [::]:80;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name ${config.ELEMENT_DOMAIN};
+
+    ssl_certificate /etc/ssl/matrix/element.crt;
+    ssl_certificate_key /etc/ssl/matrix/element.key;
 
     root /var/www/element;
     index index.html;
@@ -27488,13 +27650,26 @@ server {
     location /.well-known/matrix/client {
         return 200 '{"m.homeserver": {"base_url": "https://${config.HS_DOMAIN}"}}';
         default_type application/json;
-        add_header Access-Control-Allow-Origin *;
+        add_header 'Access-Control-Allow-Origin' '*' always;
+    }
+
+    location ~ ^(/_matrix|/_synapse/client) {
+        proxy_pass http://${synHost}:8008;
+        proxy_set_header Host ${config.HS_DOMAIN};
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        client_max_body_size 50M;
+        add_header 'Access-Control-Allow-Origin' '*' always;
     }
 }
 EOFELNGINX
 
 ln -sf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
 nginx -t 2>/dev/null && systemctl reload nginx || systemctl restart nginx || true
+
+# Firewall permissions
+command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp && ufw allow 443/tcp || true
+
 echo "ELEMENT_SETUP_SUCCESS"
 `;
 

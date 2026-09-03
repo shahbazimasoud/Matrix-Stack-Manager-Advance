@@ -56,6 +56,7 @@ import ConnectionManager from './components/ConnectionManager';
 import { InstallWizardModal } from './components/InstallWizardModal';
 import { GuidedTourModal } from './components/GuidedTourModal';
 import { AboutModal } from './components/AboutModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import RavenLogo from './components/RavenLogo';
 import { SystemStats, ServiceState, PanelUser, AuditLog, BackupItem, UndoItem, MatrixConfig, LDAPConfig, MatrixUser, CustomPermissions } from './types';
 import { PANEL_VERSION, PANEL_BUILD_DATE, PANEL_NAME, getUpdateVersionString } from './version';
@@ -2504,7 +2505,8 @@ export default function App() {
             
             {/* VIEW 1: CENTRAL METRICS DASHBOARD */}
             {activeView === 'dashboard' && (
-              <div className="space-y-6">
+              <ErrorBoundary fallbackTitle="Dashboard Metrics Recovery">
+                <div className="space-y-6">
                 
                 {/* Real-time stats bento grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -2673,28 +2675,42 @@ export default function App() {
                               <span className="text-slate-500">Host / IP:</span>
                               <span className="font-bold">{node.host}:{node.port}</span>
                             </div>
-                            {node.pingMs !== undefined && (
+                            {(node.pingMs !== undefined || node.latencyMs !== undefined) && (
                               <div className="text-[11px] font-mono text-slate-300 flex items-center justify-between">
                                 <span className="text-slate-500">Latency:</span>
-                                <span className="text-teal-400">{node.pingMs} ms</span>
+                                <span className="text-teal-400">{node.pingMs ?? node.latencyMs} ms</span>
                               </div>
                             )}
                             {node.cpu !== undefined && (
                               <div className="text-[11px] font-mono text-slate-300 flex items-center justify-between">
                                 <span className="text-slate-500">CPU Usage:</span>
-                                <span>{node.cpu}%</span>
+                                <span>{typeof node.cpu === 'object' && node.cpu !== null ? (node.cpu as any).pct : node.cpu}%</span>
                               </div>
                             )}
-                            {node.ram !== undefined && (
+                            {(node.ram !== undefined || node.memory !== undefined) && (
                               <div className="text-[11px] font-mono text-slate-300 flex items-center justify-between">
                                 <span className="text-slate-500">RAM Usage:</span>
-                                <span>{node.ram}%</span>
+                                <span>
+                                  {typeof node.ram === 'number'
+                                    ? `${node.ram}%`
+                                    : typeof node.memory === 'object' && node.memory !== null && 'pct' in node.memory
+                                      ? `${node.memory.pct}%`
+                                      : `${typeof node.ram === 'object' && node.ram !== null && 'pct' in node.ram ? (node.ram as any).pct : 0}%`}
+                                </span>
                               </div>
                             )}
-                            {node.disk !== undefined && (
+                            {(node.disk !== undefined || node.diskPct !== undefined) && (
                               <div className="text-[11px] font-mono text-slate-300 flex items-center justify-between">
                                 <span className="text-slate-500">Disk Used:</span>
-                                <span>{node.disk}%</span>
+                                <span>
+                                  {typeof node.disk === 'number'
+                                    ? `${node.disk}%`
+                                    : typeof node.diskPct === 'number'
+                                      ? `${node.diskPct}%`
+                                      : typeof node.disk === 'object' && node.disk !== null && 'pct' in node.disk
+                                        ? `${node.disk.pct}%`
+                                        : '0%'}
+                                </span>
                               </div>
                             )}
                           </div>
@@ -3192,7 +3208,8 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            )}
+            </ErrorBoundary>
+          )}
 
             {/* VIEW 2: HOMESERVER CONFIGURATION */}
             {activeView === 'config' && (

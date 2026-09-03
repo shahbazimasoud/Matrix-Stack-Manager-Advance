@@ -144,9 +144,13 @@ export interface ClusterNodeStats {
   port: number;
   status: 'online' | 'offline' | 'warning' | 'pending';
   latencyMs?: number;
+  pingMs?: number;
   cpu: number;
+  ram?: number;
   memory: { pct: number; total: number; free: number };
-  disk: { pct: number; total: number; free: number };
+  disk: number | { pct: number; total: number; free: number };
+  diskPct?: number;
+  diskDetails?: { pct: number; total: number; free: number };
   uptime: string;
   services: { id: string; name: string; status: 'active' | 'inactive' | 'error' }[];
   details?: string;
