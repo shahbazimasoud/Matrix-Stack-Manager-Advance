@@ -54,6 +54,8 @@ export interface ServerNodeConfig {
   password?: string;
   privateKey?: string;
   authType: 'password' | 'key';
+  servicePort?: number;
+  webPath?: string;
   
   // Specific configurations per node role
   dbHost?: string;
@@ -72,6 +74,65 @@ export interface ServerNodeConfig {
   adminUsername?: string;
   adminPassword?: string;
   adminAccessToken?: string;
+}
+
+export interface ConnectionProfile {
+  id: string;
+  name: string;
+  deploymentMode?: 'standalone' | 'distributed';
+
+  // Standalone / Primary Host (Synapse server in distributed mode)
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  privateKey?: string;
+  authType: 'password' | 'key' | 'agent';
+  servicePort?: number;
+  
+  // Multi-Node Distributed Server Configurations (when deploymentMode === 'distributed')
+  synapseNode?: ServerNodeConfig;
+  databaseNode?: ServerNodeConfig;
+  elementNode?: ServerNodeConfig;
+
+  // Agent-based fields
+  status?: 'online' | 'offline' | 'pending';
+  token?: string;
+  apiKey?: string;
+  lastSeen?: string;
+  domain?: string;
+  elementDomain?: string;
+  hsDomain?: string;
+  systemInfo?: any;
+  services?: any[];
+  description?: string;
+
+  // Database configuration
+  dbHost?: string;
+  dbPort?: number;
+  dbName?: string;
+  dbUser?: string;
+  dbPass?: string;
+  
+  // Config paths
+  configPath?: string;
+  homeserverYamlPath?: string;
+  elementConfigPath?: string;
+  homeserverLogPath?: string;
+
+  // Admin credentials
+  adminUsername?: string;
+  adminPassword?: string;
+  adminAccessToken?: string;
+  apiPort?: number;
+  apiBaseUrl?: string;
+  apiAdminTokenOverride?: string;
+
+  // Network Listener & Panel IP Sync
+  addPanelIpToListener?: boolean;
+  panelIp?: string;
+  
+  isActive: boolean;
 }
 
 export interface ClusterNodeStats {

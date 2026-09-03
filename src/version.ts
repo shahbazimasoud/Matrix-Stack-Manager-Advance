@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.40.1";
+export const PANEL_VERSION = "2.41.0";
 export const PANEL_BUILD_DATE = "2026-09-02";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,18 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.41.0",
+    date: "2026-09-02",
+    title: "Distributed Multi-Server Matrix Stack Installer & Interactive Node Routing",
+    changes: [
+      "Redesigned Matrix Enterprise Stack Setup Wizard: Added dedicated single-server and distributed multi-server cluster deployment modes in InstallWizardModal.",
+      "Dedicated Node IP & SSH Configuration: Interactive forms for assigning specific Host/IP, SSH port, username, authentication type (Password / PEM Private Key), and Database credentials for Synapse, PostgreSQL, and Element Web.",
+      "1-Click SSH Credential Propagation: Added quick copy buttons to easily replicate credentials from the Synapse node to the PostgreSQL and Element Web nodes.",
+      "Automated Cross-Server Interconnectivity: PostgreSQL node automatically permits remote TCP connections and whitelists Synapse Node IP in pg_hba.conf. Element Web node automatically binds its config.json to the Matrix Homeserver domain.",
+      "Multi-Phase Distributed Orchestration Pipeline: Orchestrated automated 3-phase remote execution (Database Deployment -> Synapse Homeserver Setup -> Element Web Client Installation) with real-time streamed logs and automatic cluster profile persistence."
+    ]
+  },
   {
     version: "2.40.1",
     date: "2026-09-02",

@@ -3333,6 +3333,8 @@ export default function App() {
             isLightMode={isLightMode}
             defaultHost={activeConnection?.host}
             defaultDomain={activeConnection?.domain}
+            activeConnection={activeConnection}
+            connections={connections}
           />
 
           <GuidedTourModal

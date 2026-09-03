@@ -12822,6 +12822,16 @@ if [[ "${NON_INTERACTIVE:-}" == "true" ]]; then
   
   if [[ "${ACTION}" == "install" || "${ACTION}" == "custom_install" ]]; then
     install_stack
+  elif [[ "${ACTION}" == "role_postgres" || "${ACTION}" == "install_postgres" ]]; then
+    role_install_postgres
+  elif [[ "${ACTION}" == "role_synapse" || "${ACTION}" == "install_synapse" ]]; then
+    role_install_synapse
+  elif [[ "${ACTION}" == "role_element" || "${ACTION}" == "install_element" ]]; then
+    role_install_element
+  elif [[ "${ACTION}" == "role_nginx" || "${ACTION}" == "install_nginx" ]]; then
+    role_install_nginx
+  elif [[ "${ACTION}" == "role_turn" || "${ACTION}" == "install_turn" ]]; then
+    role_install_turn
   elif [[ "${ACTION}" == "uninstall" || "${ACTION}" == "uninstall_stack" ]]; then
     full_uninstall
   elif [[ "${ACTION}" == "remove_database" || "${ACTION}" == "remove_database_and_settings" ]]; then

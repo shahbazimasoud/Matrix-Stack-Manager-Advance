@@ -17,6 +17,8 @@ export interface ServerNodeConfig {
   password?: string;
   privateKey?: string;
   authType: 'password' | 'key';
+  servicePort?: number;
+  webPath?: string;
   
   // Specific configurations per node role
   dbHost?: string;
@@ -799,6 +801,32 @@ export async function executeSSHCommand(
   };
 
   return attemptExecute(false);
+}
+
+export async function executeStreamingSSHCommand(
+  config: ConnectionProfile,
+  cmd: string,
+  targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig,
+  onData?: (data: string) => void,
+  onErr?: (data: string) => void
+): Promise<number> {
+  const targetConfig = resolveNodeProfile(config, targetNode);
+  const conn = await getOrCreateSSHClient(targetConfig);
+  return new Promise((resolve, reject) => {
+    conn.exec(cmd, (err, stream) => {
+      if (err) return reject(err);
+      stream.on('close', (code: number) => {
+        resolve(code || 0);
+      });
+      stream.on('data', (d: any) => {
+        if (onData) onData(d.toString());
+      });
+      stream.stderr.on('data', (d: any) => {
+        if (onErr) onErr(d.toString());
+        else if (onData) onData(d.toString());
+      });
+    });
+  });
 }
 
 // Dedicated helper to upload local file to remote server via SFTP over SSH connection

@@ -15,9 +15,17 @@
 
 ---
 
-## Current Panel Version: **v2.40.1** (Released: 2026-09-02)
+## Current Panel Version: **v2.41.0** (Released: 2026-09-02)
 
 ### Changelog History
+
+#### **v2.41.0** - 2026-09-02
+- **Distributed Multi-Server Matrix Stack Installer & Interactive Node Routing**:
+  - **Redesigned Matrix Enterprise Stack Setup Wizard**: Added dedicated single-server and distributed multi-server cluster deployment modes in `InstallWizardModal`.
+  - **Dedicated Node IP & SSH Configuration**: Interactive forms for assigning specific Host/IP, SSH port, username, authentication type (Password / PEM Private Key), and Database credentials for Synapse, PostgreSQL, and Element Web.
+  - **1-Click SSH Credential Propagation**: Added quick copy buttons to easily replicate credentials from the Synapse node to the PostgreSQL and Element Web nodes.
+  - **Automated Cross-Server Interconnectivity**: PostgreSQL node automatically permits remote TCP connections and whitelists Synapse Node IP in `pg_hba.conf`. Element Web node automatically binds its `config.json` to the Matrix Homeserver domain.
+  - **Multi-Phase Distributed Orchestration Pipeline**: Orchestrated automated 3-phase remote execution (Database Deployment -> Synapse Homeserver Setup -> Element Web Client Installation) with real-time streamed logs and automatic cluster profile persistence.
 
 #### **v2.40.1** - 2026-09-02
 - **Compact Cluster Test Badges & Preserved Action Layout**:

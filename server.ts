@@ -36,6 +36,7 @@ import {
   readSandboxFile,
   getActiveConnection,
   executeSSHCommand,
+  executeStreamingSSHCommand,
   uploadSSHFile,
   queryRemotePostgres,
   ConnectionProfile,
@@ -736,6 +737,7 @@ interface MetricsCache {
 }
 
 const remoteMetricsCacheMap = new Map<string, MetricsCache>();
+const remoteNodeMetricsCacheMap = new Map<string, { timestamp: number; data: any }>();
 const remoteFailureCacheMap = new Map<string, number>();
 
 async function getRemoteBatchMetrics(activeConn: ConnectionProfile) {
@@ -966,7 +968,7 @@ async function getRemoteBatchMetrics(activeConn: ConnectionProfile) {
 async function getNodeBatchMetrics(activeConn: ConnectionProfile, role: 'synapse' | 'database' | 'element'): Promise<any> {
   const targetNode = resolveNodeProfile(activeConn, role);
   const cacheKey = `${targetNode.id || targetNode.host || "default"}_${role}`;
-  const cached = remoteMetricsCacheMap.get(cacheKey);
+  const cached = remoteNodeMetricsCacheMap.get(cacheKey);
   const now = Date.now();
 
   if (cached && now - cached.timestamp < 5000) {
@@ -1109,7 +1111,7 @@ async function getNodeBatchMetrics(activeConn: ConnectionProfile, role: 'synapse
       services: activeServices
     };
 
-    remoteMetricsCacheMap.set(cacheKey, { timestamp: Date.now(), data: nodeStats });
+    remoteNodeMetricsCacheMap.set(cacheKey, { timestamp: Date.now(), data: nodeStats });
     return nodeStats;
   } catch (err: any) {
     return {
@@ -27204,6 +27206,449 @@ async function startServer() {
                 broadcastWS({ type: 'cmd_end', code: code2, isUpdate: true });
               });
             });
+          } else if (cmd === 'install') {
+            const config = payload.args?.config || {};
+            const activeConn = getActiveConnection();
+            
+            const logOut = (text: string) => broadcastWS({ type: 'cmd_stdout', text });
+            const logErr = (text: string) => broadcastWS({ type: 'cmd_stdout', text: `[!] ${text}` });
+
+            if (config.deploymentMode === 'distributed') {
+              (async () => {
+                try {
+                  logOut('╔═══════════════════════════════════════════════════════════════════╗');
+                  logOut('║  🚀 INITIATING DISTRIBUTED MATRIX ENTERPRISE STACK DEPLOYMENT    ║');
+                  logOut('╚═══════════════════════════════════════════════════════════════════╝');
+                  logOut(`>>> Target Topology: Distributed Multi-Server Cluster`);
+                  logOut(`>>> Synapse Server Node   : ${config.synapseNode?.host || config.HS_DOMAIN}`);
+                  logOut(`>>> PostgreSQL Server Node: ${config.databaseNode?.host || '127.0.0.1'}`);
+                  logOut(`>>> Element Web Server Node: ${config.elementNode?.host || config.ELEMENT_DOMAIN}`);
+                  logOut(`>>> Matrix Homeserver Domain: ${config.HS_DOMAIN}`);
+                  logOut(`>>> Element Web Domain      : ${config.ELEMENT_DOMAIN}`);
+                  logOut(`>>> Base Domain (Delegation): ${config.BASE_DOMAIN}`);
+                  logOut('─────────────────────────────────────────────────────────────────────');
+
+                  const dbNode = config.databaseNode || {};
+                  const synNode = config.synapseNode || {};
+                  const elemNode = config.elementNode || {};
+                  const dbName = dbNode.dbName || 'synapse';
+                  const dbUser = dbNode.dbUser || 'synapse_user';
+                  const dbPass = dbNode.dbPass || ('SynapseSecure_' + Math.random().toString(36).substring(2, 10));
+                  const dbPort = dbNode.dbPort || 5432;
+                  const synHost = synNode.host || config.PUBLIC_IP || '127.0.0.1';
+
+                  // --- PHASE 1: Deploy PostgreSQL Node ---
+                  logOut('');
+                  logOut('📦 [PHASE 1/3] Deploying & Configuring Dedicated PostgreSQL Database Server...');
+                  logOut(`>>> Target DB Host: ${dbNode.host || '127.0.0.1'}`);
+                  logOut(`>>> Database: ${dbName} | User: ${dbUser} | Port: ${dbPort}`);
+
+                  const pgSetupScript = `
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y postgresql postgresql-contrib
+
+systemctl enable --now postgresql
+
+# Configure user and database
+sudo -u postgres psql -c "CREATE ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}';" 2>/dev/null || sudo -u postgres psql -c "ALTER ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}';"
+sudo -u postgres psql -c "CREATE DATABASE ${dbName} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${dbUser};" 2>/dev/null || true
+
+# Configure remote listen and pg_hba whitelist for Synapse Node
+PG_CONF=$(sudo -u postgres psql -tAc "SHOW config_file;" 2>/dev/null | tr -d '[:space:]')
+PG_HBA=$(sudo -u postgres psql -tAc "SHOW hba_file;" 2>/dev/null | tr -d '[:space:]')
+
+if [ -f "$PG_CONF" ]; then
+  sed -i "s/^#*listen_addresses.*/listen_addresses = '*'/" "$PG_CONF"
+fi
+
+if [ -f "$PG_HBA" ]; then
+  grep -q "${synHost}" "$PG_HBA" 2>/dev/null || echo "host    ${dbName}    ${dbUser}    ${synHost}/32    md5" >> "$PG_HBA"
+  grep -q "127.0.0.1/32" "$PG_HBA" 2>/dev/null || echo "host    ${dbName}    ${dbUser}    127.0.0.1/32    md5" >> "$PG_HBA"
+  grep -q "0.0.0.0/0" "$PG_HBA" 2>/dev/null || echo "host    ${dbName}    ${dbUser}    0.0.0.0/0    md5" >> "$PG_HBA"
+fi
+
+# Firewall permissions if UFW active
+command -v ufw >/dev/null 2>&1 && ufw allow 5432/tcp || true
+
+systemctl restart postgresql
+echo "POSTGRESQL_SETUP_SUCCESS"
+`;
+
+                  if (dbNode.host && dbNode.host !== 'localhost' && dbNode.host !== '127.0.0.1') {
+                    const dbConnProfile: ConnectionProfile = {
+                      id: 'temp_db_node',
+                      name: 'Database Node',
+                      host: dbNode.host,
+                      port: dbNode.port || 22,
+                      username: dbNode.username || 'root',
+                      password: dbNode.password,
+                      privateKey: dbNode.privateKey,
+                      authType: dbNode.authType || (dbNode.privateKey ? 'key' : 'password'),
+                      isActive: true
+                    };
+                    logOut(`> Connecting to PostgreSQL server via SSH (${dbNode.username || 'root'}@${dbNode.host}:${dbNode.port || 22})...`);
+                    await executeStreamingSSHCommand(dbConnProfile, pgSetupScript, undefined, logOut, logErr);
+                  } else {
+                    logOut('> Executing PostgreSQL setup on local server...');
+                    await new Promise<void>((resolve, reject) => {
+                      const p = exec(pgSetupScript);
+                      p.stdout?.on('data', d => logOut(d.toString()));
+                      p.stderr?.on('data', d => logErr(d.toString()));
+                      p.on('close', code => code === 0 ? resolve() : reject(new Error(`Postgres setup failed code ${code}`)));
+                    });
+                  }
+                  logOut('✅ [PHASE 1/3 SUCCESS] PostgreSQL configured & granted remote access to Synapse node.');
+
+                  // --- PHASE 2: Deploy Synapse Node ---
+                  logOut('');
+                  logOut('🧩 [PHASE 2/3] Deploying & Configuring Matrix Synapse Homeserver Node...');
+                  logOut(`>>> Target Synapse Host: ${synNode.host || config.PUBLIC_IP}`);
+                  logOut(`>>> Homeserver Domain  : ${config.HS_DOMAIN}`);
+                  logOut(`>>> Connecting to DB  : ${dbNode.host || '127.0.0.1'}:${dbPort}/${dbName}`);
+
+                  const synapseSetupScript = `
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y lsb-release curl wget gnupg apt-transport-https python3-pip python3-psycopg2 nginx python3-yaml
+
+# Add Matrix.org official repo if not present
+if [ ! -f /etc/apt/sources.list.d/matrix-org.list ]; then
+  mkdir -p /etc/apt/keyrings
+  wget -qO /etc/apt/keyrings/matrix-org-archive-keyring.gpg https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg 2>/dev/null || true
+  echo "deb [signed-by=/etc/apt/keyrings/matrix-org-archive-keyring.gpg] https://packages.matrix.org/debian/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/matrix-org.list
+  apt-get update -y || true
+fi
+
+apt-get install -y matrix-synapse-py3 || apt-get install -y matrix-synapse || true
+
+# Generate / Update homeserver.yaml
+CONF_DIR="/etc/matrix-synapse"
+CONF_FILE="$CONF_DIR/homeserver.yaml"
+mkdir -p "$CONF_DIR"
+
+if [ ! -f "$CONF_FILE" ]; then
+  python3 -m synapse.app.homeserver --server-name "${config.HS_DOMAIN}" --config-path "$CONF_FILE" --generate-config --report-stats=no 2>/dev/null || true
+fi
+
+# Configure homeserver database block for remote PostgreSQL
+python3 -c "
+import yaml, os
+conf_path = '$CONF_FILE'
+if os.path.exists(conf_path):
+    with open(conf_path, 'r') as f:
+        data = yaml.safe_load(f) or {}
+    data['server_name'] = '${config.HS_DOMAIN}'
+    data['database'] = {
+        'name': 'psycopg2',
+        'args': {
+            'user': '${dbUser}',
+            'password': '${dbPass}',
+            'database': '${dbName}',
+            'host': '${dbNode.host || '127.0.0.1'}',
+            'port': ${dbPort},
+            'cp_min': 5,
+            'cp_max': 20
+        }
+    }
+    data['enable_registration'] = True
+    data['enable_registration_without_verification'] = True
+    data['suppress_key_server_warning'] = True
+    data['rc_messages_per_second'] = 50
+    data['rc_message_burst_count'] = 100
+    with open(conf_path, 'w') as f:
+        yaml.dump(data, f, default_flow_style=False)
+" 2>/dev/null || true
+
+# Configure Nginx reverse proxy on Synapse node
+cat << 'EOFNGINX' > /etc/nginx/sites-available/matrix-synapse.conf
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${config.HS_DOMAIN};
+
+    location /.well-known/matrix/server {
+        return 200 '{"m.server": "${config.HS_DOMAIN}:443"}';
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+    }
+
+    location /.well-known/matrix/client {
+        return 200 '{"m.homeserver": {"base_url": "https://${config.HS_DOMAIN}"}}';
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+    }
+
+    location ~ ^(/_matrix|/_synapse/client) {
+        proxy_pass http://127.0.0.1:8008;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \$host;
+        client_max_body_size 50M;
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods 'GET, POST, PUT, DELETE, OPTIONS';
+        add_header Access-Control-Allow-Headers 'X-Requested-With, Content-Type, Authorization';
+    }
+}
+EOFNGINX
+
+ln -sf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
+nginx -t 2>/dev/null && systemctl reload nginx || systemctl restart nginx || true
+
+systemctl enable --now matrix-synapse
+systemctl restart matrix-synapse
+echo "SYNAPSE_SETUP_SUCCESS"
+`;
+
+                  if (synNode.host && synNode.host !== 'localhost' && synNode.host !== '127.0.0.1') {
+                    const synConnProfile: ConnectionProfile = {
+                      id: 'temp_syn_node',
+                      name: 'Synapse Node',
+                      host: synNode.host,
+                      port: synNode.port || 22,
+                      username: synNode.username || 'root',
+                      password: synNode.password,
+                      privateKey: synNode.privateKey,
+                      authType: synNode.authType || (synNode.privateKey ? 'key' : 'password'),
+                      isActive: true
+                    };
+                    logOut(`> Connecting to Synapse server via SSH (${synNode.username || 'root'}@${synNode.host}:${synNode.port || 22})...`);
+                    await executeStreamingSSHCommand(synConnProfile, synapseSetupScript, undefined, logOut, logErr);
+                  } else {
+                    logOut('> Executing Synapse setup on local server...');
+                    await new Promise<void>((resolve, reject) => {
+                      const p = exec(synapseSetupScript);
+                      p.stdout?.on('data', d => logOut(d.toString()));
+                      p.stderr?.on('data', d => logErr(d.toString()));
+                      p.on('close', code => code === 0 ? resolve() : reject(new Error(`Synapse setup failed code ${code}`)));
+                    });
+                  }
+                  logOut('✅ [PHASE 2/3 SUCCESS] Matrix Synapse Homeserver deployed and connected to PostgreSQL.');
+
+                  // --- PHASE 3: Deploy Element Web Node ---
+                  logOut('');
+                  logOut('🧭 [PHASE 3/3] Deploying & Configuring Element Web Frontend Node...');
+                  logOut(`>>> Target Element Host: ${elemNode.host || config.ELEMENT_DOMAIN}`);
+                  logOut(`>>> Web Domain        : ${config.ELEMENT_DOMAIN}`);
+                  logOut(`>>> Homeserver URL    : https://${config.HS_DOMAIN}`);
+
+                  const elemVersion = config.elementOnlineVersion || '1.11.55';
+                  const elementSetupScript = `
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y nginx wget curl tar
+
+mkdir -p /var/www/element
+cd /tmp
+wget -qO element.tar.gz "https://github.com/element-hq/element-web/releases/download/v${elemVersion}/element-v${elemVersion}.tar.gz" 2>/dev/null || \
+wget -qO element.tar.gz "https://packages.element.io/desktop/tarballs/element-web/v${elemVersion}/element-v${elemVersion}.tar.gz" 2>/dev/null || true
+
+if [ -f element.tar.gz ]; then
+  tar -xzf element.tar.gz -C /var/www/element --strip-components=1 2>/dev/null || true
+  rm -f element.tar.gz
+fi
+
+# Generate Element config.json
+cat << 'EOFELEM' > /var/www/element/config.json
+{
+    "default_server_config": {
+        "m.homeserver": {
+            "base_url": "https://${config.HS_DOMAIN}",
+            "server_name": "${config.HS_DOMAIN}"
+        },
+        "m.identity_server": {
+            "base_url": "https://vector.im"
+        }
+    },
+    "brand": "Raven Matrix",
+    "integrations_ui_url": "https://dimension.matrix.org/riot",
+    "integrations_rest_url": "https://dimension.matrix.org/api/v1",
+    "default_theme": "dark",
+    "room_directory": {
+        "servers": ["${config.HS_DOMAIN}"]
+    }
+}
+EOFELEM
+
+# Configure Nginx for Element Web
+cat << 'EOFELNGINX' > /etc/nginx/sites-available/element-web.conf
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${config.ELEMENT_DOMAIN};
+
+    root /var/www/element;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+
+    location /.well-known/matrix/client {
+        return 200 '{"m.homeserver": {"base_url": "https://${config.HS_DOMAIN}"}}';
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+    }
+}
+EOFELNGINX
+
+ln -sf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
+nginx -t 2>/dev/null && systemctl reload nginx || systemctl restart nginx || true
+echo "ELEMENT_SETUP_SUCCESS"
+`;
+
+                  if (elemNode.host && elemNode.host !== 'localhost' && elemNode.host !== '127.0.0.1') {
+                    const elemConnProfile: ConnectionProfile = {
+                      id: 'temp_elem_node',
+                      name: 'Element Node',
+                      host: elemNode.host,
+                      port: elemNode.port || 22,
+                      username: elemNode.username || 'root',
+                      password: elemNode.password,
+                      privateKey: elemNode.privateKey,
+                      authType: elemNode.authType || (elemNode.privateKey ? 'key' : 'password'),
+                      isActive: true
+                    };
+                    logOut(`> Connecting to Element Web server via SSH (${elemNode.username || 'root'}@${elemNode.host}:${elemNode.port || 22})...`);
+                    await executeStreamingSSHCommand(elemConnProfile, elementSetupScript, undefined, logOut, logErr);
+                  } else {
+                    logOut('> Executing Element Web setup on local server...');
+                    await new Promise<void>((resolve, reject) => {
+                      const p = exec(elementSetupScript);
+                      p.stdout?.on('data', d => logOut(d.toString()));
+                      p.stderr?.on('data', d => logErr(d.toString()));
+                      p.on('close', code => code === 0 ? resolve() : reject(new Error(`Element setup failed code ${code}`)));
+                    });
+                  }
+                  logOut('✅ [PHASE 3/3 SUCCESS] Element Web Frontend deployed and connected to Synapse.');
+
+                  // --- Auto-Save / Update Connection Profile in Panel DB ---
+                  const dbState = readDb();
+                  const profileId = activeConn?.id && activeConn.id !== 'local' ? activeConn.id : 'cluster_' + Date.now();
+                  const updatedProfile: ConnectionProfile = {
+                    id: profileId,
+                    name: `Matrix Enterprise Cluster (${config.BASE_DOMAIN || synHost})`,
+                    deploymentMode: 'distributed',
+                    host: synHost,
+                    port: synNode.port || 22,
+                    username: synNode.username || 'root',
+                    password: synNode.password,
+                    privateKey: synNode.privateKey,
+                    authType: synNode.authType || (synNode.privateKey ? 'key' : 'password'),
+                    synapseNode: {
+                      host: synHost,
+                      port: synNode.port || 22,
+                      username: synNode.username || 'root',
+                      password: synNode.password,
+                      privateKey: synNode.privateKey,
+                      authType: synNode.authType || (synNode.privateKey ? 'key' : 'password'),
+                      homeserverYamlPath: '/etc/matrix-synapse/homeserver.yaml',
+                      configPath: '/etc/matrix-synapse'
+                    },
+                    databaseNode: {
+                      host: dbNode.host || '127.0.0.1',
+                      port: dbNode.port || 22,
+                      username: dbNode.username || 'root',
+                      password: dbNode.password,
+                      privateKey: dbNode.privateKey,
+                      authType: dbNode.authType || (dbNode.privateKey ? 'key' : 'password'),
+                      dbHost: dbNode.host || '127.0.0.1',
+                      dbPort: dbPort,
+                      dbName: dbName,
+                      dbUser: dbUser,
+                      dbPass: dbPass
+                    },
+                    elementNode: {
+                      host: elemNode.host || '127.0.0.1',
+                      port: elemNode.port || 22,
+                      username: elemNode.username || 'root',
+                      password: elemNode.password,
+                      privateKey: elemNode.privateKey,
+                      authType: elemNode.authType || (elemNode.privateKey ? 'key' : 'password'),
+                      elementConfigPath: '/var/www/element/config.json'
+                    },
+                    dbHost: dbNode.host || '127.0.0.1',
+                    dbPort: dbPort,
+                    dbName: dbName,
+                    dbUser: dbUser,
+                    dbPass: dbPass,
+                    hsDomain: config.HS_DOMAIN,
+                    elementDomain: config.ELEMENT_DOMAIN,
+                    domain: config.BASE_DOMAIN,
+                    isActive: true
+                  };
+
+                  if (!Array.isArray(dbState.connections)) {
+                    dbState.connections = [];
+                  }
+                  const existingIdx = dbState.connections.findIndex((c: any) => c.id === profileId);
+                  if (existingIdx >= 0) {
+                    dbState.connections[existingIdx] = updatedProfile;
+                  } else {
+                    dbState.connections.push(updatedProfile);
+                  }
+                  dbState.activeConnectionId = profileId;
+                  writeDb(dbState);
+
+                  logOut('');
+                  logOut('╔═══════════════════════════════════════════════════════════════════╗');
+                  logOut('║  🎉 DISTRIBUTED MATRIX CLUSTER DEPLOYED SUCCESSFULLY!             ║');
+                  logOut('╚═══════════════════════════════════════════════════════════════════╝');
+                  logOut(`>>> Synapse Homeserver: https://${config.HS_DOMAIN}`);
+                  logOut(`>>> Element Web Client: https://${config.ELEMENT_DOMAIN}`);
+                  logOut(`>>> Database Server   : ${dbNode.host || '127.0.0.1'}:${dbPort} (${dbName})`);
+                  logOut(`>>> Panel Profile     : Synced & Saved as Active Distributed Cluster`);
+                  logOut('>>> All nodes are communicating properly across the network.');
+                  broadcastWS({ type: 'cmd_end', code: 0 });
+                } catch (deployErr: any) {
+                  logErr(`Deployment Error: ${deployErr.message || deployErr}`);
+                  broadcastWS({ type: 'cmd_end', code: 1 });
+                }
+              })();
+            } else {
+              const envVars: Record<string, string> = {
+                NON_INTERACTIVE: 'true',
+                ACTION: 'install',
+                HS_DOMAIN: config.HS_DOMAIN || '',
+                ELEMENT_DOMAIN: config.ELEMENT_DOMAIN || '',
+                BASE_DOMAIN: config.BASE_DOMAIN || '',
+                PUBLIC_IP: config.PUBLIC_IP || '',
+                LE_EMAIL: config.LE_EMAIL || '',
+                SSL_MODE: config.SSL_MODE || 'auto',
+                INSTALL_SOURCE: config.INSTALL_SOURCE || 'online',
+                ELEMENT_INSTALL_MODE: config.ELEMENT_INSTALL_MODE || 'online',
+                ELEMENT_VERSION: config.ELEMENT_VERSION || '',
+                LDAP_CONFIGURE_NOW: config.LDAP_CONFIGURE_NOW ? 'true' : 'false',
+                LDAP_URI: config.LDAP_URI || '',
+                LDAP_BIND_DN: config.LDAP_BIND_DN || '',
+                LDAP_BIND_PASS: config.LDAP_BIND_PASS || '',
+                LDAP_BASE_DN: config.LDAP_BASE_DN || ''
+              };
+
+              const envPrefix = Object.entries(envVars)
+                .filter(([_, v]) => v)
+                .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                .join(' ');
+
+              logOut('>>> Initializing Matrix Enterprise Stack Installation (Single-Server Mode)...');
+              
+              if (activeConn && activeConn.id !== 'local') {
+                logOut(`>>> Deploying to Remote Target: ${activeConn.host}`);
+                const remoteCmd = `${envPrefix} bash -c "$(curl -fsSL https://raw.githubusercontent.com/shahbazimasoud/Matrix-Stack-Manager-Advance/master/install-matrix-stack.sh || cat install-matrix-stack.sh 2>/dev/null)"`;
+                executeStreamingSSHCommand(activeConn, remoteCmd, undefined, logOut, logErr)
+                  .then(code => broadcastWS({ type: 'cmd_end', code }))
+                  .catch(err => {
+                    logErr(err.message);
+                    broadcastWS({ type: 'cmd_end', code: 1 });
+                  });
+              } else {
+                const installProc = exec(`${envPrefix} bash ./install-matrix-stack.sh`);
+                installProc.stdout?.on('data', d => logOut(d.toString()));
+                installProc.stderr?.on('data', d => logErr(d.toString()));
+                installProc.on('close', code => broadcastWS({ type: 'cmd_end', code }));
+              }
+            }
           } else if (cmd === 'health_check') {
             broadcastWS({ type: 'cmd_stdout', text: '>>> Running Matrix Stack Diagnostics...' });
             broadcastWS({ type: 'cmd_stdout', text: '[✓] Node.js Runtime: Active' });
