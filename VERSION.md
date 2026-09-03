@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.49.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.50.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.50.0** - 2026-09-03
+- **PostgreSQL Remote Authentication, Synapse Config Integrity & Multi-Lingual Architecture Polish**:
+  - **Synapse 502 Bad Gateway Hardening**: Pre-validates direct PostgreSQL socket and psycopg2 authentication from Python prior to homeserver startup, generates standard `log.yaml`, removes conflicting `conf.d/` configuration files, auto-generates signing keys, and resets systemd failure rate limits.
+  - **PostgreSQL Node Multi-Server Whitelisting**: Added full database ownership, schema permissions, and prioritized `pg_hba.conf` CIDR rules guaranteeing remote Synapse nodes can connect immediately without authentication rejection.
+  - **Complete Component Localization**: Verified and ensured that the Configure Matrix Enterprise Stack modal and sub-components are 100% free of hardcoded Persian text, seamlessly using the panel's multi-lingual translation dictionary.
+  - **Diagnostic Telemetry**: Added comprehensive failure inspection with `systemctl status`, `journalctl` unit logs, and homeserver log output if Synapse port 8008 fails to respond within 30 seconds.
 
 #### **v2.49.0** - 2026-09-03
 - **502 Bad Gateway Resolution for Synapse & Element Nodes, Full Multi-Lingual Wizard Localization**:

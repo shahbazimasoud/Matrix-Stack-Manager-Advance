@@ -12207,11 +12207,18 @@ role_install_synapse() {
   fi
   rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
 
+  # Clean up any conflicting settings in conf.d/ to prevent duplicate-key ConfigError
+  rm -f /etc/matrix-synapse/conf.d/server_name.yaml /etc/matrix-synapse/conf.d/report_stats.yaml /etc/matrix-synapse/conf.d/database.yaml /etc/matrix-synapse/conf.d/*sqlite* /etc/matrix-synapse/conf.d/*postgres* 2>/dev/null || true
+  yaml_set "report_stats" "false"
+
   SYNAPSE_HOST="$(hostname -I | awk '{print $1}')"
   HS_DOMAIN="${hs_domain}"
   DEPLOY_HS_DOMAIN="${hs_domain}"
   save_deployment_config
 
+  fix_synapse_perms 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl reset-failed matrix-synapse 2>/dev/null || true
   systemctl enable --now matrix-synapse 2>/dev/null || true
   echo "✅ Synapse role installed on ${SYNAPSE_HOST}, using PostgreSQL at ${pg_host}:${pg_port}."
   pause

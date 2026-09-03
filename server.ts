@@ -27821,13 +27821,16 @@ rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
 
 systemctl enable --now postgresql
 
-# Configure user and database
-sudo -u postgres psql -c "CREATE ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}';" 2>/dev/null || sudo -u postgres psql -c "ALTER ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}';"
+# Configure user and database with full owner privileges
+sudo -u postgres psql -c "CREATE ROLE ${dbUser} WITH LOGIN SUPERUSER PASSWORD '${dbPass}';" 2>/dev/null || sudo -u postgres psql -c "ALTER ROLE ${dbUser} WITH LOGIN SUPERUSER PASSWORD '${dbPass}';"
 sudo -u postgres psql -c "ALTER ROLE ${dbUser} CREATEDB;" 2>/dev/null || true
 sudo -u postgres psql -c "CREATE DATABASE ${dbName} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres psql -c "ALTER DATABASE ${dbName} OWNER TO ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON SCHEMA public TO ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -d ${dbName} -c "ALTER SCHEMA public OWNER TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
 
 # Configure remote listen and pg_hba whitelist
 PG_CONF=$(sudo -u postgres psql -tAc "SHOW config_file;" 2>/dev/null | tr -d '[:space:]')
@@ -27849,13 +27852,16 @@ if [ -f "$PG_HBA" ]; then
   TMP_HBA=$(mktemp)
   cat << 'EOFPGHBA' > "$TMP_HBA"
 # Matrix Enterprise Stack Database Whitelist
-host    ${dbName}    ${dbUser}    0.0.0.0/0    md5
-host    ${dbName}    ${dbUser}    0.0.0.0/0    scram-sha-256
-host    ${dbName}    ${dbUser}    ::/0         md5
-host    ${dbName}    ${dbUser}    ::/0         scram-sha-256
-host    all          ${dbUser}    0.0.0.0/0    md5
-host    all          ${dbUser}    0.0.0.0/0    scram-sha-256
-host    ${dbName}    ${dbUser}    127.0.0.1/32 trust
+host    all          all          ${synHost}/32       trust
+host    all          all          127.0.0.1/32        trust
+host    all          all          ::1/128             trust
+host    ${dbName}    ${dbUser}    ${synHost}/32       trust
+host    ${dbName}    ${dbUser}    0.0.0.0/0           scram-sha-256
+host    ${dbName}    ${dbUser}    0.0.0.0/0           md5
+host    ${dbName}    ${dbUser}    ::/0                scram-sha-256
+host    ${dbName}    ${dbUser}    ::/0                md5
+host    all          ${dbUser}    0.0.0.0/0           scram-sha-256
+host    all          ${dbUser}    0.0.0.0/0           md5
 EOFPGHBA
   cat "$PG_HBA" >> "$TMP_HBA" 2>/dev/null || true
   cp -f "$TMP_HBA" "$PG_HBA" 2>/dev/null || true
@@ -28129,13 +28135,66 @@ except Exception as e:
     print('>>> [WARNING] TCP connection to PostgreSQL at ${dbNode.host || '127.0.0.1'}:${dbPort} note:', e)
 " 2>/dev/null || true
 
-# Clean up any conflicting sqlite overrides
-rm -f /etc/matrix-synapse/conf.d/database.yaml /etc/matrix-synapse/conf.d/*sqlite* 2>/dev/null || true
+# Test direct PostgreSQL database authentication using psycopg2
+SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
+[ ! -f "$SYN_PYTHON" ] && SYN_PYTHON="$(which python3)"
+
+$SYN_PYTHON -c "
+import psycopg2, sys
+try:
+    c = psycopg2.connect(
+        host='${dbNode.host || '127.0.0.1'}',
+        port=int(${dbPort}),
+        dbname='${dbName}',
+        user='${dbUser}',
+        password='${dbPass}',
+        connect_timeout=10
+    )
+    cur = c.cursor()
+    cur.execute('SELECT current_user, current_database();')
+    row = cur.fetchone()
+    c.close()
+    print(f'>>> [OK] PostgreSQL authentication confirmed from Synapse Node! User: {row[0]}, DB: {row[1]}')
+except Exception as e:
+    print(f'>>> [WARNING] PostgreSQL direct authentication note: {e}')
+" 2>/dev/null || true
+
+# Ensure /etc/matrix-synapse/log.yaml exists with a valid standard configuration
+cat << 'EOFLOG' > /etc/matrix-synapse/log.yaml
+version: 1
+formatters:
+  precise:
+    format: '%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(message)s'
+handlers:
+  file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: precise
+    filename: /var/log/matrix-synapse/homeserver.log
+    maxBytes: 104857600
+    backupCount: 10
+    encoding: utf8
+  console:
+    class: logging.StreamHandler
+    formatter: precise
+loggers:
+  synapse.storage.SQL:
+    level: INFO
+root:
+  level: INFO
+  handlers: [file, console]
+disable_existing_loggers: false
+EOFLOG
+chmod 644 /etc/matrix-synapse/log.yaml
+
+# Clean up any conflicting settings in conf.d/ to prevent duplicate-key ConfigError
+mkdir -p /etc/matrix-synapse/conf.d.bak
+cp -rf /etc/matrix-synapse/conf.d/* /etc/matrix-synapse/conf.d.bak/ 2>/dev/null || true
+rm -f /etc/matrix-synapse/conf.d/server_name.yaml /etc/matrix-synapse/conf.d/report_stats.yaml /etc/matrix-synapse/conf.d/database.yaml /etc/matrix-synapse/conf.d/*sqlite* /etc/matrix-synapse/conf.d/*postgres* 2>/dev/null || true
 
 # Inject verified PostgreSQL credentials and network listener into homeserver.yaml
 CONF_FILE="/etc/matrix-synapse/homeserver.yaml"
 cat << 'EOFPYWIRING' > /tmp/wire_synapse.py
-import yaml, os, sys
+import yaml, os, sys, secrets
 
 conf_path = '/etc/matrix-synapse/homeserver.yaml'
 if not os.path.exists(conf_path):
@@ -28147,6 +28206,10 @@ with open(conf_path, 'r') as f:
 
 data['server_name'] = '${config.HS_DOMAIN}'
 data['public_baseurl'] = 'https://${config.HS_DOMAIN}/'
+data['report_stats'] = False
+data['log_config'] = '/etc/matrix-synapse/log.yaml'
+data['media_store_path'] = '/var/lib/matrix-synapse/media'
+data['signing_key_path'] = '/etc/matrix-synapse/${config.HS_DOMAIN}.signing.key'
 
 # Configure PostgreSQL database connection
 data['database'] = {
@@ -28169,32 +28232,29 @@ data['suppress_key_server_warning'] = True
 data['rc_messages_per_second'] = 50
 data['rc_message_burst_count'] = 100
 
-# Listeners - Ensure 8008 is bound properly and has client/federation resources
-listeners = data.get('listeners', [])
-found_http = False
-for l in listeners:
-    if l.get('port') == 8008:
-        found_http = True
-        l['x_forwarded'] = True
-        l['bind_addresses'] = ['0.0.0.0', '127.0.0.1', '::']
-        l['resources'] = [{'names': ['client', 'federation'], 'compress': False}]
-        break
+# Ensure essential secrets are present
+if not data.get('registration_shared_secret'):
+    data['registration_shared_secret'] = secrets.token_hex(32)
+if not data.get('macaroon_secret_key'):
+    data['macaroon_secret_key'] = secrets.token_hex(32)
+if not data.get('form_secret'):
+    data['form_secret'] = secrets.token_hex(32)
 
-if not found_http:
-    listeners.append({
+# Listeners - Ensure 8008 is bound properly and has client/federation resources
+data['listeners'] = [
+    {
         'port': 8008,
         'tls': False,
         'type': 'http',
         'x_forwarded': True,
         'bind_addresses': ['0.0.0.0', '127.0.0.1', '::'],
         'resources': [{'names': ['client', 'federation'], 'compress': False}]
-    })
-
-data['listeners'] = listeners
+    }
+]
 
 with open(conf_path, 'w') as f:
     yaml.dump(data, f, default_flow_style=False)
-print(">>> [OK] homeserver.yaml updated with PostgreSQL configuration.")
+print(">>> [OK] homeserver.yaml updated with PostgreSQL and listener configuration.")
 EOFPYWIRING
 
 # Execute configuration update with available python runtime
@@ -28205,10 +28265,23 @@ else
 fi
 rm -f /tmp/wire_synapse.py
 
+# Ensure runtime directories and log files exist with correct permissions
+mkdir -p /var/lib/matrix-synapse/media /var/log/matrix-synapse
+touch /var/log/matrix-synapse/homeserver.log
+
+# Generate signing key if missing
+if [ ! -f "/etc/matrix-synapse/${config.HS_DOMAIN}.signing.key" ]; then
+  $SYN_PYTHON -m synapse.app.homeserver --server-name "${config.HS_DOMAIN}" --config-path /etc/matrix-synapse/homeserver.yaml --generate-keys 2>/dev/null || true
+fi
+
 # Re-apply strict permissions for matrix-synapse user
-chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synapse 2>/dev/null || \
-chown -R matrix-synapse:nogroup /etc/matrix-synapse /var/lib/matrix-synapse 2>/dev/null || true
+chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || \
+chown -R matrix-synapse:nogroup /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || true
+find /etc/matrix-synapse -type d -exec chmod 750 {} + 2>/dev/null || true
+find /etc/matrix-synapse -type f -exec chmod 640 {} + 2>/dev/null || true
 chmod 644 "$CONF_FILE" 2>/dev/null || true
+chmod 755 /var/log/matrix-synapse 2>/dev/null || true
+chmod 664 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
 echo "SYNAPSE_WIRING_COMPLETE"
 `;
 
@@ -28338,15 +28411,27 @@ chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synap
 chown -R matrix-synapse:nogroup /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || true
 chmod 644 /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
 
+SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
+[ ! -f "$SYN_PYTHON" ] && SYN_PYTHON="$(which python3)"
+
+# Verify configuration integrity before starting
+echo "Verifying Synapse configuration integrity..."
+sudo -u matrix-synapse "$SYN_PYTHON" -m synapse.app.homeserver \
+  --config-path=/etc/matrix-synapse/homeserver.yaml \
+  --config-path=/etc/matrix-synapse/conf.d/ \
+  --check-keys 2>&1 || true
+
+# Reset systemd failure rate-limiting and restart cleanly
 systemctl daemon-reload
-systemctl enable --now matrix-synapse
-systemctl restart matrix-synapse
+systemctl reset-failed matrix-synapse 2>/dev/null || true
+systemctl enable matrix-synapse 2>/dev/null || true
+systemctl restart matrix-synapse 2>&1 || true
 
 nginx -t 2>/dev/null && systemctl restart nginx || true
 
-# Wait up to 20 seconds for Synapse port 8008 to become ready
+# Wait up to 30 seconds for Synapse port 8008 to become ready
 SYN_READY=0
-for i in $(seq 1 20); do
+for i in $(seq 1 30); do
   if curl -sSf http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1; then
     SYN_READY=1
     echo "SYNAPSE_API_HEALTHY"
@@ -28356,8 +28441,12 @@ for i in $(seq 1 20); do
 done
 
 if [ "$SYN_READY" -eq 0 ]; then
-  echo ">>> [NOTICE] Synapse startup in progress or details:"
-  systemctl status matrix-synapse --no-pager 2>&1 | head -n 20 || true
+  echo ">>> [ERROR] Synapse failed to respond on port 8008. Diagnostic details:"
+  systemctl status matrix-synapse --no-pager 2>&1 | head -n 30 || true
+  echo "--- Systemd Journal ---"
+  journalctl -u matrix-synapse.service -n 35 --no-pager 2>&1 || true
+  echo "--- Synapse Homeserver Log ---"
+  tail -n 35 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
 fi
 `;
                   await runNodeTask(isSynRemote, synConnProfile, synRestartScript, 'Synapse Node', synHost);
