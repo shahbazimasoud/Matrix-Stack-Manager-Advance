@@ -15,9 +15,14 @@
 
 ---
 
-## Current Panel Version: **v2.55.1** (Released: 2026-09-03)
+## Current Panel Version: **v2.55.2** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.55.2** - 2026-09-03
+- **Synchronized `package-lock.json` for Ultra-Fast Clean `npm ci`**:
+  - **Resolved npm `EUSAGE` Lockfile Mismatch**: Synchronized `package-lock.json` with all latest dependencies (`@fontsource/vazirmatn@5.3.0`, `@types/cookie-parser@1.4.10`, `@types/js-yaml@4.0.9`, `@types/node-cron@3.0.11`, `@types/nodemailer@8.0.1`, `@types/react@19.2.18`, `@types/react-dom@19.2.7`, `cookie-parser@1.4.7`, `js-yaml@5.4.1`, `ldapts@9.0.0`, `node-cron@4.6.0`, `nodemailer@9.1.1`, and `recharts@3.10.1`).
+  - **Clean & Deterministic `npm ci` Execution**: Enables `setup-panel.sh` to install all dependencies cleanly on Attempt 1 via `npm ci` in ~1-2 seconds with zero error output and zero warning cascades.
 
 #### **v2.55.1** - 2026-09-03
 - **PostgreSQL `pg_hba.conf` Remote Whitelisting Syntax Fix**:
