@@ -14561,6 +14561,12 @@ function updateHomeserverYamlConfig(existingYamlText: string, configUpdates: any
       if (configUpdates.PG_HOST) doc.database.args.host = configUpdates.PG_HOST.trim();
       if (configUpdates.PG_PORT) doc.database.args.port = parseInt(configUpdates.PG_PORT, 10) || 5432;
       if (configUpdates.PG_PASS) doc.database.args.password = configUpdates.PG_PASS;
+      if (!doc.database.args.sslmode) doc.database.args.sslmode = "disable";
+      if (!doc.database.args.cp_min) doc.database.args.cp_min = 5;
+      if (!doc.database.args.cp_max) doc.database.args.cp_max = 20;
+      if (!doc.database.args.keepalives_idle) doc.database.args.keepalives_idle = 10;
+      if (!doc.database.args.keepalives_interval) doc.database.args.keepalives_interval = 10;
+      if (!doc.database.args.keepalives_count) doc.database.args.keepalives_count = 3;
     }
 
     // 3. Max Upload Size
@@ -27832,7 +27838,7 @@ sudo -u postgres psql -d ${dbName} -c "ALTER SCHEMA public OWNER TO ${dbUser};" 
 sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
 
-# Configure remote listen and pg_hba whitelist
+# Configure remote listen, disable SSL negotiation resets, and configure robust pg_hba whitelist
 PG_CONF=$(sudo -u postgres psql -tAc "SHOW config_file;" 2>/dev/null | tr -d '[:space:]')
 PG_HBA=$(sudo -u postgres psql -tAc "SHOW hba_file;" 2>/dev/null | tr -d '[:space:]')
 
@@ -27846,26 +27852,97 @@ fi
 if [ -f "$PG_CONF" ]; then
   sed -i "s/^#*listen_addresses.*/listen_addresses = '*'/" "$PG_CONF" 2>/dev/null || true
   grep -q "listen_addresses = '*'" "$PG_CONF" 2>/dev/null || echo "listen_addresses = '*'" >> "$PG_CONF"
+  # Set ssl = off so PostgreSQL does not abort unencrypted pool connections or trigger SSL connection closed unexpectedly
+  sed -i "s/^#*ssl[[:space:]]*=.*/ssl = off/" "$PG_CONF" 2>/dev/null || true
+  grep -q "ssl = off" "$PG_CONF" 2>/dev/null || echo "ssl = off" >> "$PG_CONF"
+  chown postgres:postgres "$PG_CONF" 2>/dev/null || true
+  chmod 644 "$PG_CONF" 2>/dev/null || true
 fi
 
 if [ -f "$PG_HBA" ]; then
-  TMP_HBA=$(mktemp)
-  cat << 'EOFPGHBA' > "$TMP_HBA"
-# Matrix Enterprise Stack Database Whitelist
-host    all          all          ${synHost}/32       trust
-host    all          all          127.0.0.1/32        trust
-host    all          all          ::1/128             trust
-host    ${dbName}    ${dbUser}    ${synHost}/32       trust
-host    ${dbName}    ${dbUser}    0.0.0.0/0           scram-sha-256
-host    ${dbName}    ${dbUser}    0.0.0.0/0           md5
-host    ${dbName}    ${dbUser}    ::/0                scram-sha-256
-host    ${dbName}    ${dbUser}    ::/0                md5
-host    all          ${dbUser}    0.0.0.0/0           scram-sha-256
-host    all          ${dbUser}    0.0.0.0/0           md5
-EOFPGHBA
-  cat "$PG_HBA" >> "$TMP_HBA" 2>/dev/null || true
-  cp -f "$TMP_HBA" "$PG_HBA" 2>/dev/null || true
-  rm -f "$TMP_HBA"
+  cp -a "$PG_HBA" "\.bak.88467429" 2>/dev/null || true
+
+  python3 -c "
+import ipaddress, socket, re, sys
+
+hba_file = sys.argv[1]
+syn_host = sys.argv[2].strip()
+db_user = sys.argv[3].strip()
+db_name = sys.argv[4].strip()
+
+try:
+    with open(hba_file, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+except Exception:
+    content = ''
+
+# Strip any previous Matrix Enterprise Stack Database Whitelist block to prevent duplicates
+content = re.sub(r'# Matrix Enterprise Stack Database Whitelist.*?# End Matrix Enterprise Stack Database Whitelist
+?', '', content, flags=re.DOTALL)
+
+entries = ['127.0.0.1/32', '::1/128']
+
+try:
+    if '/' in syn_host:
+        net = ipaddress.ip_network(syn_host, strict=False)
+        entries.append(str(net))
+    else:
+        ip = ipaddress.ip_address(syn_host)
+        if ip.version == 4:
+            entries.append(f'{ip}/32')
+            if ip.is_private:
+                subnet = ipaddress.ip_network(f'{ip}/24', strict=False)
+                entries.append(str(subnet))
+        else:
+            entries.append(f'{ip}/128')
+except ValueError:
+    if syn_host and syn_host != 'localhost':
+        entries.append(syn_host)
+        try:
+            for res in socket.getaddrinfo(syn_host, None):
+                ip_str = res[4][0]
+                if ':' in ip_str:
+                    entries.append(f'{ip_str}/128')
+                else:
+                    entries.append(f'{ip_str}/32')
+        except Exception:
+            pass
+
+seen = set()
+unique_entries = [x for x in entries if not (x in seen or seen.add(x))]
+
+lines = [
+    '# Matrix Enterprise Stack Database Whitelist',
+    '# Localhost and cluster trusted access'
+]
+for e in unique_entries:
+    lines.append(f'host    all          all          {e:26} trust')
+    lines.append(f'host    {db_name}    {db_user}    {e:26} trust')
+
+lines.extend([
+    '# Remote cluster access for synapse user with password authentication',
+    f'host    {db_name}    {db_user}    0.0.0.0/0                 md5',
+    f'host    {db_name}    {db_user}    0.0.0.0/0                 scram-sha-256',
+    f'host    {db_name}    {db_user}    ::/0                      md5',
+    f'host    {db_name}    {db_user}    ::/0                      scram-sha-256',
+    f'host    all          {db_user}    0.0.0.0/0                 md5',
+    f'host    all          {db_user}    0.0.0.0/0                 scram-sha-256',
+    f'host    all          {db_user}    ::/0                      md5',
+    f'host    all          {db_user}    ::/0                      scram-sha-256',
+    '# End Matrix Enterprise Stack Database Whitelist',
+    ''
+])
+
+new_block = '\n'.join(lines)
+final_content = new_block + content.lstrip()
+
+with open(hba_file, 'w', encoding='utf-8') as f:
+    f.write(final_content)
+" "$PG_HBA" "${synHost}" "${dbUser}" "${dbName}" 2>&1 || true
+
+  # Ensure postgres user owns and can read pg_hba.conf (mode 640)
+  chown postgres:postgres "$PG_HBA" 2>/dev/null || true
+  chmod 640 "$PG_HBA" 2>/dev/null || true
 fi
 
 # Firewall permissions for PostgreSQL port 5432
@@ -28121,7 +28198,10 @@ echo "ELEMENT_BASE_PROVISION_COMPLETE"
 
                   // Synapse -> Postgres wiring script
                   const synapseWireScript = `
-# Test TCP connectivity to remote PostgreSQL server
+# Discover network egress IP and test TCP connectivity to remote PostgreSQL server
+SYN_EGRESS_IP=$(ip route get "${dbNode.host || '127.0.0.1'}" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -n 1)
+[ -z "$SYN_EGRESS_IP" ] && SYN_EGRESS_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+echo "Synapse Node egress IP to DB: "
 echo "Testing TCP socket to PostgreSQL Database at ${dbNode.host || '127.0.0.1'}:${dbPort}..."
 python3 -c "
 import socket, sys
@@ -28135,29 +28215,52 @@ except Exception as e:
     print('>>> [WARNING] TCP connection to PostgreSQL at ${dbNode.host || '127.0.0.1'}:${dbPort} note:', e)
 " 2>/dev/null || true
 
-# Test direct PostgreSQL database authentication using psycopg2
+# Test direct PostgreSQL database authentication using psycopg2 with sslmode=disable
 SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
 [ ! -f "$SYN_PYTHON" ] && SYN_PYTHON="$(which python3)"
 
 $SYN_PYTHON -c "
 import psycopg2, sys
+
+db_host = '${dbNode.host || '127.0.0.1'}'
+db_port = int(${dbPort})
+db_name = '${dbName}'
+db_user = '${dbUser}'
+db_pass = '${dbPass}'
+
+print(f'Testing psycopg2 connection to PostgreSQL at {db_host}:{db_port} as {db_user} (sslmode=disable)...')
 try:
     c = psycopg2.connect(
-        host='${dbNode.host || '127.0.0.1'}',
-        port=int(${dbPort}),
-        dbname='${dbName}',
-        user='${dbUser}',
-        password='${dbPass}',
+        host=db_host,
+        port=db_port,
+        dbname=db_name,
+        user=db_user,
+        password=db_pass,
+        sslmode='disable',
         connect_timeout=10
     )
     cur = c.cursor()
-    cur.execute('SELECT current_user, current_database();')
+    cur.execute('SELECT current_user, current_database(), version();')
     row = cur.fetchone()
     c.close()
-    print(f'>>> [OK] PostgreSQL authentication confirmed from Synapse Node! User: {row[0]}, DB: {row[1]}')
+    print(f'>>> [OK] PostgreSQL authentication verified! User: {row[0]}, DB: {row[1]}')
 except Exception as e:
-    print(f'>>> [WARNING] PostgreSQL direct authentication note: {e}')
-" 2>/dev/null || true
+    print(f'>>> [WARNING] PostgreSQL connection note: {e}')
+    # Try fallback connection
+    try:
+        c = psycopg2.connect(
+            host=db_host,
+            port=db_port,
+            dbname=db_name,
+            user=db_user,
+            sslmode='disable',
+            connect_timeout=10
+        )
+        c.close()
+        print('>>> [OK] PostgreSQL connected via trusted pg_hba entry!')
+    except Exception as e2:
+        print(f'>>> [WARNING] PostgreSQL fallback note: {e2}')
+" 2>&1 || true
 
 # Ensure /etc/matrix-synapse/log.yaml exists with a valid standard configuration
 cat << 'EOFLOG' > /etc/matrix-synapse/log.yaml
@@ -28211,7 +28314,7 @@ data['log_config'] = '/etc/matrix-synapse/log.yaml'
 data['media_store_path'] = '/var/lib/matrix-synapse/media'
 data['signing_key_path'] = '/etc/matrix-synapse/${config.HS_DOMAIN}.signing.key'
 
-# Configure PostgreSQL database connection
+# Configure PostgreSQL database connection with sslmode=disable and TCP keepalives
 data['database'] = {
     'name': 'psycopg2',
     'args': {
@@ -28220,8 +28323,12 @@ data['database'] = {
         'database': '${dbName}',
         'host': '${dbNode.host || '127.0.0.1'}',
         'port': int(${dbPort}),
+        'sslmode': 'disable',
         'cp_min': 5,
-        'cp_max': 20
+        'cp_max': 20,
+        'keepalives_idle': 10,
+        'keepalives_interval': 10,
+        'keepalives_count': 3
     }
 }
 
@@ -28434,9 +28541,12 @@ SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
 
 # Verify configuration integrity before starting
 echo "Verifying Synapse configuration integrity..."
+SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
+[ ! -f "$SYN_PYTHON" ] && SYN_PYTHON="$(which python3)"
+
+# Check keys
 sudo -u matrix-synapse "$SYN_PYTHON" -m synapse.app.homeserver \
   --config-path=/etc/matrix-synapse/homeserver.yaml \
-  --config-path=/etc/matrix-synapse/conf.d/ \
   --check-keys 2>&1 || true
 
 # Reset systemd failure rate-limiting and start cleanly
@@ -28447,24 +28557,34 @@ systemctl start matrix-synapse 2>&1 || true
 
 nginx -t 2>/dev/null && systemctl restart nginx || true
 
-# Wait up to 30 seconds for Synapse port 8008 to become ready
+# Wait up to 45 seconds for Synapse port 8008 to become ready and serve API requests
 SYN_READY=0
-for i in $(seq 1 30); do
+for i in $(seq 1 45); do
   if curl -sSf http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1; then
     SYN_READY=1
-    echo "SYNAPSE_API_HEALTHY"
+    echo "SYNAPSE_API_HEALTHY: Port 8008 is active and serving /_matrix/client/versions"
     break
   fi
   sleep 1
 done
 
-if [ "$SYN_READY" -eq 0 ]; then
-  echo ">>> [ERROR] Synapse failed to respond on port 8008. Diagnostic details:"
-  systemctl status matrix-synapse --no-pager 2>&1 | head -n 30 || true
+if [ "$SYN_READY" -eq 1 ]; then
+  # Also verify that Nginx reverse proxy responds properly (not 502)
+  NGINX_TEST=$(curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1/_matrix/client/versions 2>/dev/null || curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/_matrix/client/versions 2>/dev/null || echo "000")
+  echo ">>> Nginx Reverse Proxy HTTP Status: $NGINX_TEST"
+  if [ "$NGINX_TEST" = "200" ]; then
+    echo ">>> [OK] Nginx reverse proxy verified (HTTP 200) - No 502 Bad Gateway!"
+  else
+    echo ">>> [NOTE] Nginx returned HTTP $NGINX_TEST (Synapse backend is active on 8008)"
+  fi
+else
+  echo ">>> [ERROR] Synapse failed to respond on port 8008 after 45s. Diagnostic details:"
+  systemctl status matrix-synapse --no-pager 2>&1 | head -n 35 || true
   echo "--- Systemd Journal ---"
-  journalctl -u matrix-synapse.service -n 35 --no-pager 2>&1 || true
+  journalctl -u matrix-synapse.service -n 50 --no-pager 2>&1 || true
   echo "--- Synapse Homeserver Log ---"
-  tail -n 35 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
+  tail -n 50 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
+  exit 1
 fi
 `;
                   await runNodeTask(isSynRemote, synConnProfile, synRestartScript, 'Synapse Node', synHost);

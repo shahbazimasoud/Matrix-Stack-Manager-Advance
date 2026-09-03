@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.50.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.51.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.51.0** - 2026-09-03
+- **Synapse PostgreSQL SSLMode Hardening, Robust pg_hba Access & Startup Diagnostic Health Loop**:
+  - **Synapse 502 Bad Gateway Prevention**: Explicitly injects `sslmode: disable` and TCP keepalive settings (`keepalives_idle: 10`, `interval: 10`, `count: 3`) into `homeserver.yaml` database arguments, resolving psycopg2 'SSL connection closed unexpectedly' and connection reset crashes.
+  - **PostgreSQL Server Configuration**: Sets `ssl = off` and `listen_addresses = '*'` in `postgresql.conf` to avoid unexpected TLS resets during pooled Synapse queries.
+  - **Bullet-proof pg_hba.conf Management**: Implemented automated Python-driven whitelist updater that handles IPv4, IPv6, CIDRs, private subnets, and hostnames with DNS resolution, while strictly enforcing `postgres:postgres` ownership and `640` permissions.
+  - **Synapse Startup Health Verification**: Extended health check loop to 45s with detailed journalctl/homeserver.log capture and automated exit code failure reporting to prevent false success reporting when the API is not yet healthy.
 
 #### **v2.50.0** - 2026-09-03
 - **PostgreSQL Remote Authentication, Synapse Config Integrity & Multi-Lingual Architecture Polish**:

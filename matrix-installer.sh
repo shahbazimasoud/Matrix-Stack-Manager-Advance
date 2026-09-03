@@ -5121,8 +5121,12 @@ setup_postgres_db() {
   yaml_set_str "database.args.database" "${PG_DB}"
   yaml_set_str "database.args.host" "${PG_HOST}"
   yaml_set "database.args.port" "${PG_PORT}"
+  yaml_set_str "database.args.sslmode" "disable"
   yaml_set "database.args.cp_min" "5"
-  yaml_set "database.args.cp_max" "10"
+  yaml_set "database.args.cp_max" "20"
+  yaml_set "database.args.keepalives_idle" "10"
+  yaml_set "database.args.keepalives_interval" "10"
+  yaml_set "database.args.keepalives_count" "3"
 
   echo "🐍 Verifying psycopg2 is available to Synapse's Python environment..."
   if [[ -x /opt/venvs/matrix-synapse/bin/python ]]; then
@@ -5317,6 +5321,8 @@ manage_remote_db_access() {
         echo "${hba_line}" >> "${pg_hba}"
         echo "✅ Added pg_hba.conf rule for ${cidr}"
       fi
+      chown postgres:postgres "${pg_hba}" 2>/dev/null || true
+      chmod 640 "${pg_hba}" 2>/dev/null || true
 
       # 3) Firewall (UFW), scoped to this IP/range only
       if command -v ufw >/dev/null 2>&1; then
@@ -12189,6 +12195,12 @@ role_install_synapse() {
   yaml_set_str "database.args.database" "${pg_db}"
   yaml_set_str "database.args.host" "${pg_host}"
   yaml_set "database.args.port" "${pg_port}"
+  yaml_set_str "database.args.sslmode" "disable"
+  yaml_set "database.args.cp_min" "5"
+  yaml_set "database.args.cp_max" "20"
+  yaml_set "database.args.keepalives_idle" "10"
+  yaml_set "database.args.keepalives_interval" "10"
+  yaml_set "database.args.keepalives_count" "3"
 
   if [[ -x /opt/venvs/matrix-synapse/bin/python ]] && \
      ! /opt/venvs/matrix-synapse/bin/python -c "import psycopg2" >/dev/null 2>&1; then
