@@ -15,9 +15,15 @@
 
 ---
 
-## Current Panel Version: **v2.45.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.46.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.46.0** - 2026-09-03
+- **Collapsible Server Status Cards, Light Theme Harmonization, & Single-Line Action Buttons**:
+  - **Collapsible Server Profile Overview**: The Connected Server Profile now opens in a closed state by default with a compact overview strip of all 3 server nodes (endpoint, live status pills). Users can toggle to expand the full detailed card grid.
+  - **Light Theme Harmonization**: Full visual compatibility with light theme mode, replacing dark-only contrast with clean light cards (`bg-white/95`), slate typography, and accessible status indicators across all modes.
+  - **Single-Line Connection Action Buttons**: Adjusted the Export, Import, and Add Server/Cluster action buttons in Connection Manager into a strict single horizontal line (`flex-nowrap`, `shrink-0`) across all viewport widths.
 
 #### **v2.45.0** - 2026-09-03
 - **Dynamic Multi-Server Connection Status Cards & Compact Action Bar**:

@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.45.0";
+export const PANEL_VERSION = "2.46.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.46.0",
+    date: "2026-09-03",
+    title: "Collapsible Server Status Cards, Light Theme Harmonization, & Single-Line Action Buttons",
+    changes: [
+      "Collapsible Server Profile Overview: Connected Server Profile now opens in a closed state showing a concise overview strip for all 3 nodes (endpoints, live status dots), with an interactive toggle to expand full details.",
+      "Light Theme Harmonization: Complete visual redesign of the Connected Server Profile cards for light theme mode with clean white backgrounds, high-contrast typography, and accessible status indicators.",
+      "Single-Line Connection Action Buttons: Realigned the Export, Import, and Add Server/Cluster action buttons in Connection Manager to remain strictly on a single horizontal row across all screen sizes."
+    ]
+  },
   {
     version: "2.45.0",
     date: "2026-09-03",

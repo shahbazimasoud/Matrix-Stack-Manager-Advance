@@ -1302,7 +1302,7 @@ export default function ConnectionManager({
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="spatial-glass rounded-3xl p-6 border border-white/5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="spatial-glass rounded-3xl p-6 border border-white/5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-teal-500/10 text-teal-400 border border-teal-500/10">
@@ -1317,7 +1317,7 @@ export default function ConnectionManager({
           </div>
         </div>
 
-        <div className="flex flex-row flex-wrap items-center gap-2 self-start md:self-auto">
+        <div className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto no-scrollbar max-w-full shrink-0">
           <input
             type="file"
             ref={fileInputRef}
