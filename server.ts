@@ -27933,7 +27933,7 @@ while start_marker in content and end_marker in content:
     if p2 == -1:
         break
     p2 += len(end_marker)
-    while p2 < len(content) and content[p2] in "\r\n":
+    while p2 < len(content) and (content[p2] == chr(10) or content[p2] == chr(13)):
         p2 += 1
     content = content[:p1] + content[p2:]
 
@@ -28643,8 +28643,8 @@ echo "SYNAPSE_SERVICE_START_DISPATCHED"
                   logOut('   ▶ Service start signal dispatched. Initiating bounded health verification probe loop...');
 
                   // Step 3.2.B: Bounded Health Check Loop with Exponential Backoff & Connection Safety
-                  const maxRetries = 10;
-                  const totalTimeoutMs = 60000;
+                  const maxRetries = 15;
+                  const totalTimeoutMs = 90000;
                   const startTime = Date.now();
                   let synHealthy = false;
                   let nginxStatus = '000';
@@ -28665,8 +28665,11 @@ echo "SYNAPSE_SERVICE_START_DISPATCHED"
                       // Probe using the pooled single connection to Synapse node
                       const probeCmd = `
                         SYN_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://127.0.0.1:8008/_matrix/client/versions 2>/dev/null || echo "000")
+                        if [ "$SYN_CODE" = "000" ] || [ "$SYN_CODE" = "404" ]; then
+                          SYN_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://127.0.0.1:8008/_synapse/admin/v1/server_version 2>/dev/null || echo "000")
+                        fi
                         NGINX_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" -m 3 https://127.0.0.1/_matrix/client/versions 2>/dev/null || curl -s -o /dev/null -w "%{http_code}" -m 3 http://127.0.0.1/_matrix/client/versions 2>/dev/null || echo "000")
-                        echo "SYN:${SYN_CODE}|NGINX:${NGINX_CODE}"
+                        echo "SYN:$SYN_CODE|NGINX:$NGINX_CODE"
                       `.trim();
 
                       let probeResult = '';
@@ -28682,7 +28685,8 @@ echo "SYNAPSE_SERVICE_START_DISPATCHED"
                       const synCode = match ? match[1] : '000';
                       nginxStatus = match ? match[2] : '000';
 
-                      if (synCode === '200') {
+                      const synCodeNum = parseInt(synCode, 10);
+                      if (synCodeNum >= 200 && synCodeNum < 400) {
                         synHealthy = true;
                         logOut(`   ✅ [Synapse API Healthy] Port 8008 responded with HTTP 200 (Nginx Reverse Proxy: HTTP ${nginxStatus}).`);
                         break;

@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.55.2** (Released: 2026-09-03)
+## Current Panel Version: **v2.55.3** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.55.3** - 2026-09-03
+- **Fix Health Probe Evaluation & Database Whitelist Unterminated String**:
+  - **Resolved `SYN_CODE is not defined` Error in Probe Loop**: Corrected bash variable interpolation inside Node.js template string so JavaScript no longer misinterprets `${SYN_CODE}` as a missing JS variable.
+  - **Dual Endpoint Verification**: Health check now evaluates both `/_matrix/client/versions` and `/_synapse/admin/v1/server_version`, accepting any healthy HTTP 2xx/3xx response.
+  - **Relaxed Warmup Window**: Increased max health check retries to 15 (90-second ceiling) to accommodate initial background PostgreSQL schema indexing smoothly.
+  - **Resolved Python SyntaxError on Database Node**: Sanitized carriage return/linefeed character comparison in `/tmp/wire_pg_hba.py` to prevent newline injection errors.
 
 #### **v2.55.2** - 2026-09-03
 - **Synchronized `package-lock.json` for Ultra-Fast Clean `npm ci`**:

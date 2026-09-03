@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.55.2";
+export const PANEL_VERSION = "2.55.3";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.55.3",
+    date: "2026-09-03",
+    title: "Fix Health Probe Syntax & Database Whitelist Unterminated String",
+    changes: [
+      "Fixed JS template literal syntax evaluation error (SYN_CODE is not defined) in Stage 3 Synapse health check probe loop.",
+      "Added fallback HTTP endpoint check (/_synapse/admin/v1/server_version) in addition to (/_matrix/client/versions) with support for all healthy 2xx/3xx codes.",
+      "Extended Synapse startup probe timeout to 90 seconds (15 retries) with exponential backoff to ensure smooth first-time schema migrations.",
+      "Fixed Python unterminated string literal syntax error in Database Node pg_hba.conf whitelist parser."
+    ]
+  },
   {
     version: "2.55.2",
     date: "2026-09-03",
