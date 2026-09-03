@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.42.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.43.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.43.0** - 2026-09-03
+- **Parallel Distributed Stack Deployment, Connection Profile Auto-Fill & Resilient SSH Handshake**:
+  - **Resilient SSH Handshake & 60s Timeout**: Increased SSH handshake timeout to 60 seconds with broad cipher and server host key algorithm negotiation and automatic pool cache clearing, resolving remote handshake timeout failures.
+  - **Connection Profile Pre-Fill & Interactive Sync in Setup Wizard**: Setup wizard automatically pre-populates Synapse, PostgreSQL, and Element Web SSH and database credentials directly from the active connection profile. Added interactive profile selector and reload buttons for instant syncing on the fly.
+  - **Concurrent Multi-Node Provisioning Pipeline**: Redesigned the 3-server distributed installer to concurrently provision packages and base environments across Database, Synapse, and Element nodes simultaneously (`Promise.all`) with node-tagged streaming logs.
+  - **Coordinated Sequential Service Restarts**: Automated orderly post-configuration service restarts: (1) PostgreSQL DB -> (2) Matrix Synapse & Nginx -> (3) Element Web Nginx, followed by socket verification.
 
 #### **v2.42.0** - 2026-09-03
 - **Distributed Cluster Service Isolation, Robust Inter-Node Networking & Dashboard Error Recovery**:

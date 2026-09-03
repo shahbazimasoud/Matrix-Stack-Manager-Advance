@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, Check, AlertCircle, ShieldCheck, ChevronRight, ChevronLeft, 
   Terminal, Globe, Key, CloudDownload, FileText, CheckCircle, 
-  Server, ArrowRight, Database, Layers, Network, Copy, CheckCheck
+  Server, ArrowRight, Database, Layers, Network, Copy, CheckCheck,
+  RotateCw, Sparkles
 } from 'lucide-react';
 import { wizardTranslations } from './installWizard/translations';
 
@@ -103,41 +104,90 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
   const [ldapBindPassword, setLdapBindPassword] = useState('');
   const [ldapBaseDn, setLdapBaseDn] = useState('');
 
-  // Initialize or pre-populate values when modal opens or activeConnection changes
+  const [selectedProfileId, setSelectedProfileId] = useState<string>('');
+  const [profileLoadedNotice, setProfileLoadedNotice] = useState<string | null>(null);
+
+  // Load connection profile data into wizard inputs
+  const loadProfileData = (conn: any) => {
+    if (!conn) return;
+
+    // Multi-node auto-detection if connection has cluster info or separate DB host
+    const isCluster = conn.deploymentMode === 'distributed' ||
+      Boolean(conn.databaseNode?.host || conn.elementNode?.host || (conn.dbHost && conn.dbHost !== '127.0.0.1' && conn.dbHost !== 'localhost'));
+    if (isCluster) {
+      setDeploymentMode('distributed');
+    }
+
+    // Domains & Networking
+    const domainVal = conn.domain || conn.baseDomain || defaultDomain || '';
+    if (domainVal) setBaseDomain(domainVal);
+    if (conn.hsDomain) {
+      setHsDomain(conn.hsDomain);
+    } else if (domainVal) {
+      setHsDomain(`matrix.${domainVal}`);
+    }
+    if (conn.elementDomain) {
+      setElementDomain(conn.elementDomain);
+    } else if (domainVal) {
+      setElementDomain(`chat.${domainVal}`);
+    }
+    if (conn.host) setPublicIp(conn.host);
+
+    // 1. Synapse Node
+    const syn = conn.synapseNode || conn;
+    setSynapseHost(syn.host || conn.host || '');
+    setSynapsePort(Number(syn.port || conn.port) || 22);
+    setSynapseUsername(syn.username !== undefined ? syn.username : (conn.username || 'root'));
+    const synAuth = syn.authType || conn.authType || 'password';
+    setSynapseAuthType(synAuth === 'key' ? 'privateKey' : 'password');
+    setSynapsePassword(syn.password !== undefined ? syn.password : (conn.password || ''));
+    setSynapsePrivateKey(syn.privateKey !== undefined ? syn.privateKey : (conn.privateKey || ''));
+
+    // 2. Database Node
+    const db = conn.databaseNode || {};
+    setDbHost(db.host || conn.dbHost || '');
+    setDbSshPort(Number(db.port) || 22);
+    setDbUsername(db.username !== undefined ? db.username : 'root');
+    const dbAuth = db.authType || 'password';
+    setDbAuthType(dbAuth === 'key' ? 'privateKey' : 'password');
+    setDbSshPassword(db.password !== undefined ? db.password : '');
+    setDbPrivateKey(db.privateKey !== undefined ? db.privateKey : '');
+    setDbName(db.dbName || conn.dbName || 'synapse');
+    setDbUser(db.dbUser || conn.dbUser || 'synapse_user');
+    setDbPass(db.dbPass !== undefined ? db.dbPass : (conn.dbPass || ''));
+    setDbPostgresPort(Number(db.dbPort || conn.dbPort) || 5432);
+
+    // 3. Element Web Node
+    const elem = conn.elementNode || {};
+    setElementHost(elem.host || '');
+    setElementSshPort(Number(elem.port) || 22);
+    setElementUsername(elem.username !== undefined ? elem.username : 'root');
+    const elemAuth = elem.authType || 'password';
+    setElementAuthType(elemAuth === 'key' ? 'privateKey' : 'password');
+    setElementSshPassword(elem.password !== undefined ? elem.password : '');
+    setElementPrivateKey(elem.privateKey !== undefined ? elem.privateKey : '');
+  };
+
+  // Initialize and auto pre-populate values when modal opens or activeConnection changes
   useEffect(() => {
     if (isOpen) {
-      const initBase = defaultDomain || 'example.com';
-      const initHost = defaultHost || '127.0.0.1';
+      const activeConn = activeConnection || (connections && connections.find((c: any) => c.isActive)) || (connections && connections[0]);
+      if (activeConn) {
+        setSelectedProfileId(activeConn.id || '');
+        loadProfileData(activeConn);
+      } else {
+        const initBase = defaultDomain || 'example.com';
+        const initHost = defaultHost || '127.0.0.1';
 
-      if (!baseDomain) setBaseDomain(initBase);
-      if (!hsDomain) setHsDomain(initBase ? `matrix.${initBase}` : 'matrix.example.com');
-      if (!elementDomain) setElementDomain(initBase ? `chat.${initBase}` : 'chat.example.com');
-      if (!publicIp) setPublicIp(initHost);
-      if (!leEmail) setLeEmail(`admin@${initBase}`);
-
-      // Synapse initial credentials
-      if (!synapseHost) setSynapseHost(activeConnection?.host || initHost);
-      if (activeConnection?.port) setSynapsePort(activeConnection.port);
-      if (activeConnection?.username) setSynapseUsername(activeConnection.username);
-      if (activeConnection?.authType) setSynapseAuthType(activeConnection.authType);
-      if (activeConnection?.password) setSynapsePassword(activeConnection.password);
-      if (activeConnection?.privateKey) setSynapsePrivateKey(activeConnection.privateKey);
-
-      // Multi-node auto-detection if activeConnection has cluster info
-      if (activeConnection?.deploymentMode === 'distributed') {
-        setDeploymentMode('distributed');
-        if (activeConnection?.nodes?.database?.host) setDbHost(activeConnection.nodes.database.host);
-        if (activeConnection?.nodes?.database?.port) setDbSshPort(activeConnection.nodes.database.port);
-        if (activeConnection?.nodes?.database?.username) setDbUsername(activeConnection.nodes.database.username);
-        if (activeConnection?.nodes?.database?.password) setDbSshPassword(activeConnection.nodes.database.password);
-
-        if (activeConnection?.nodes?.element?.host) setElementHost(activeConnection.nodes.element.host);
-        if (activeConnection?.nodes?.element?.port) setElementSshPort(activeConnection.nodes.element.port);
-        if (activeConnection?.nodes?.element?.username) setElementUsername(activeConnection.nodes.element.username);
-        if (activeConnection?.nodes?.element?.password) setElementSshPassword(activeConnection.nodes.element.password);
+        if (!baseDomain) setBaseDomain(initBase);
+        if (!hsDomain) setHsDomain(initBase ? `matrix.${initBase}` : 'matrix.example.com');
+        if (!elementDomain) setElementDomain(initBase ? `chat.${initBase}` : 'chat.example.com');
+        if (!publicIp) setPublicIp(initHost);
+        if (!leEmail) setLeEmail(`admin@${initBase}`);
+        if (!synapseHost) setSynapseHost(initHost);
       }
     }
-  }, [isOpen, activeConnection, defaultHost, defaultDomain]);
+  }, [isOpen, activeConnection]);
 
   if (!isOpen) return null;
 
@@ -559,6 +609,94 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                     </h3>
                     <p className={`text-sm transition-colors duration-300 ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.serverDesc}</p>
                   </div>
+
+                  {/* Connection Profile Auto-Fill & Selector */}
+                  {connections && connections.length > 0 && (
+                    <div className={`p-4 rounded-2xl border transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+                      isLightMode ? 'bg-indigo-50/70 border-indigo-200' : 'bg-indigo-950/20 border-indigo-500/20'
+                    }`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2.5 rounded-xl ${isLightMode ? 'bg-indigo-100 text-indigo-700' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className={`text-xs font-bold ${isLightMode ? 'text-indigo-950' : 'text-indigo-200'}`}>
+                            {lang === 'fa' ? 'بارگذاری خودکار مشخصات از پروفایل اتصال' : 'Pre-fill from Saved Connection Profile'}
+                          </div>
+                          <div className={`text-[11px] ${isLightMode ? 'text-indigo-600/80' : 'text-indigo-400/80'}`}>
+                            {lang === 'fa' 
+                              ? 'اطلاعات SSH سرور سیناپس، دیتابیس و المنت به‌طور خودکار پر می‌شود' 
+                              : 'Synapse, Database, and Element SSH credentials will be mapped from this profile'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <select
+                          value={selectedProfileId}
+                          onChange={(e) => {
+                            const pId = e.target.value;
+                            setSelectedProfileId(pId);
+                            const found = connections.find((c: any) => c.id === pId);
+                            if (found) {
+                              loadProfileData(found);
+                              setProfileLoadedNotice(found.name || found.host);
+                              setTimeout(() => setProfileLoadedNotice(null), 3000);
+                            }
+                          }}
+                          className={`flex-1 sm:flex-initial text-xs font-semibold rounded-xl border px-3 py-2 transition-all font-mono focus:outline-none ${
+                            isLightMode 
+                              ? 'bg-white border-indigo-200 text-slate-800 focus:border-indigo-500' 
+                              : 'bg-slate-900 border-indigo-500/30 text-white focus:border-indigo-400'
+                          }`}
+                        >
+                          {connections.map((c: any) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name || c.host} ({c.deploymentMode === 'distributed' ? 'Cluster' : 'Single'}{c.isActive ? ' - Active' : ''})
+                            </option>
+                          ))}
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const found = connections.find((c: any) => c.id === selectedProfileId) || connections[0];
+                            if (found) {
+                              loadProfileData(found);
+                              setProfileLoadedNotice(found.name || found.host);
+                              setTimeout(() => setProfileLoadedNotice(null), 3000);
+                            }
+                          }}
+                          title={lang === 'fa' ? 'بارگذاری مجدد' : 'Reload'}
+                          className={`p-2 rounded-xl border text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer shrink-0 ${
+                            isLightMode 
+                              ? 'bg-white border-indigo-200 text-indigo-700 hover:bg-indigo-50' 
+                              : 'bg-slate-900 border-indigo-500/30 text-indigo-300 hover:bg-indigo-900/30'
+                          }`}
+                        >
+                          <RotateCw className="w-3.5 h-3.5" />
+                          <span className="hidden md:inline">{lang === 'fa' ? 'بارگذاری مجدد' : 'Reload'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {profileLoadedNotice && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 ${
+                        isLightMode ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-emerald-950/30 text-emerald-300 border border-emerald-500/30'
+                      }`}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>
+                        {lang === 'fa' 
+                          ? `مشخصات سرورها با موفقیت از پروفایل "${profileLoadedNotice}" جایگذاری شد.`
+                          : `Credentials loaded from profile "${profileLoadedNotice}".`}
+                      </span>
+                    </motion.div>
+                  )}
 
                   {/* Architecture Topology Selector */}
                   <div className={`p-4 rounded-2xl border transition-colors ${isLightMode ? 'bg-slate-50/70 border-slate-200' : 'bg-slate-950/30 border-white/5'}`}>

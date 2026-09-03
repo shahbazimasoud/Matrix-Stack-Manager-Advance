@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.42.0";
+export const PANEL_VERSION = "2.43.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.43.0",
+    date: "2026-09-03",
+    title: "Parallel Distributed Stack Deployment, Connection Profile Auto-Fill & Resilient SSH Handshake",
+    changes: [
+      "Resilient SSH Handshake & 60s Timeout: Increased SSH handshake timeout to 60 seconds with broad cipher/host-key algorithm negotiation and automatic pool cache clearing, resolving handshake timeout errors.",
+      "Connection Profile Pre-Fill & Interactive Sync: Wizard automatically pre-populates Synapse, PostgreSQL, and Element Web nodes from the active connection profile. Added on-the-fly profile selector and reload buttons.",
+      "Concurrent Multi-Node Provisioning: Parallelized Stage 1 package installation across all 3 nodes (Database, Synapse, Element Web) concurrently using Promise.all with tagged streaming logs.",
+      "Coordinated Sequential Service Restarts: Automated orderly post-configuration service restarts: (1) PostgreSQL DB -> (2) Matrix Synapse & Nginx -> (3) Element Web Nginx, followed by socket verification."
+    ]
+  },
   {
     version: "2.42.0",
     date: "2026-09-03",

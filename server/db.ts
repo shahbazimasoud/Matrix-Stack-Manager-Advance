@@ -597,8 +597,24 @@ interface CachedSSH {
 
 const sshPool = new Map<string, CachedSSH>();
 
+export function clearSSHConnectionCache(target?: string): void {
+  if (target) {
+    for (const [key, cached] of Array.from(sshPool.entries())) {
+      if (key.includes(target) || key.startsWith(`${target}_`)) {
+        try { cached.conn?.end(); } catch {}
+        sshPool.delete(key);
+      }
+    }
+  } else {
+    for (const [, cached] of Array.from(sshPool.entries())) {
+      try { cached.conn?.end(); } catch {}
+    }
+    sshPool.clear();
+  }
+}
+
 function getSSHKey(config: ConnectionProfile): string {
-  return `${config.id || "node"}_${config.host}_${config.port || 22}_${config.username}`;
+  return `${config.id || "node"}_${config.host}_${config.port || 22}_${config.username || "root"}`;
 }
 
 async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClient> {
@@ -624,10 +640,15 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
       resolve(conn);
     });
 
-    conn.on("error", (err) => {
+    conn.on("error", (err: any) => {
       sshPool.delete(key);
       if (!isHandshakeDone) {
-        reject(err);
+        const msg = err?.message || String(err);
+        if (msg.includes("Timed out while waiting for handshake") || msg.includes("timed out")) {
+          reject(new Error(`Timed out while waiting for SSH handshake on ${config.host}:${config.port || 22} (60s limit). Please check host reachability, firewall on port ${config.port || 22}, and remote sshd responsiveness.`));
+        } else {
+          reject(err);
+        }
       }
     });
 
@@ -641,16 +662,47 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
 
     const connOpts: any = {
       host: config.host,
-      port: config.port || 22,
-      username: config.username,
-      readyTimeout: 10000,
+      port: Number(config.port) || 22,
+      username: config.username || "root",
+      readyTimeout: 60000,
       keepaliveInterval: 10000,
-      keepaliveCountMax: 3
+      keepaliveCountMax: 30,
+      algorithms: {
+        serverHostKey: [
+          'ssh-ed25519',
+          'ecdsa-sha2-nistp256',
+          'ecdsa-sha2-nistp384',
+          'ecdsa-sha2-nistp521',
+          'rsa-sha2-512',
+          'rsa-sha2-256',
+          'ssh-rsa'
+        ],
+        cipher: [
+          'aes128-gcm',
+          'aes128-gcm@openssh.com',
+          'aes256-gcm',
+          'aes256-gcm@openssh.com',
+          'chacha20-poly1305@openssh.com',
+          'aes128-ctr',
+          'aes192-ctr',
+          'aes256-ctr'
+        ]
+      }
     };
 
-    if (config.authType === "password") {
+    if (config.password) {
       connOpts.password = config.password;
-    } else {
+    }
+    if (config.privateKey) {
+      connOpts.privateKey = config.privateKey;
+      if ((config as any).passphrase) {
+        connOpts.passphrase = (config as any).passphrase;
+      }
+    }
+
+    if (config.authType === "password" && config.password) {
+      connOpts.password = config.password;
+    } else if (config.authType === "key" && config.privateKey) {
       connOpts.privateKey = config.privateKey;
     }
 
@@ -813,10 +865,20 @@ export async function executeStreamingSSHCommand(
   const targetConfig = resolveNodeProfile(config, targetNode);
   const conn = await getOrCreateSSHClient(targetConfig);
   return new Promise((resolve, reject) => {
+    let resolved = false;
     conn.exec(cmd, (err, stream) => {
       if (err) return reject(err);
       stream.on('close', (code: number) => {
-        resolve(code || 0);
+        if (!resolved) {
+          resolved = true;
+          resolve(code || 0);
+        }
+      });
+      stream.on('error', (streamErr: any) => {
+        if (!resolved) {
+          resolved = true;
+          reject(streamErr);
+        }
       });
       stream.on('data', (d: any) => {
         if (onData) onData(d.toString());
@@ -900,22 +962,6 @@ setInterval(() => {
     }
   }
 }, 2 * 60 * 1000);
-
-export function clearSSHConnectionCache(connId?: string) {
-  if (connId) {
-    for (const [key, value] of sshPool.entries()) {
-      if (key.startsWith(`${connId}_`)) {
-        try { if (value.conn) value.conn.end(); } catch (e) {}
-        sshPool.delete(key);
-      }
-    }
-  } else {
-    for (const [key, value] of sshPool.entries()) {
-      try { if (value.conn) value.conn.end(); } catch (e) {}
-    }
-    sshPool.clear();
-  }
-}
 
 export function interpolateQueryParams(queryStr: string, params: any[]): string {
   if (!params || params.length === 0) return queryStr;
