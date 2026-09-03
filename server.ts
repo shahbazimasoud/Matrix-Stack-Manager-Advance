@@ -27827,16 +27827,39 @@ rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
 
 systemctl enable --now postgresql
 
-# Configure user and database with full owner privileges
-sudo -u postgres psql -c "CREATE ROLE ${dbUser} WITH LOGIN SUPERUSER PASSWORD '${dbPass}';" 2>/dev/null || sudo -u postgres psql -c "ALTER ROLE ${dbUser} WITH LOGIN SUPERUSER PASSWORD '${dbPass}';"
-sudo -u postgres psql -c "ALTER ROLE ${dbUser} CREATEDB;" 2>/dev/null || true
-sudo -u postgres psql -c "CREATE DATABASE ${dbName} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${dbUser};" 2>/dev/null || true
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
-sudo -u postgres psql -c "ALTER DATABASE ${dbName} OWNER TO ${dbUser};" 2>/dev/null || true
+# Idempotently verify and configure database user/role
+echo "🐘 [PostgreSQL Provisioning] Verifying database role '${dbUser}'..."
+ROLE_EXISTS=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${dbUser}';" 2>/dev/null | tr -d '[:space:]')
+if [ "$ROLE_EXISTS" = "1" ]; then
+  echo "ℹ️  [PostgreSQL] Role '${dbUser}' already exists. Skipping creation and verifying privileges/password..."
+  sudo -u postgres psql -c "ALTER ROLE ${dbUser} WITH LOGIN SUPERUSER CREATEDB PASSWORD '${dbPass}';" 2>/dev/null || true
+  echo "✅ [PostgreSQL] Role '${dbUser}' privileges verified."
+else
+  echo "🐘 [PostgreSQL] Role '${dbUser}' does not exist. Creating role with LOGIN SUPERUSER CREATEDB..."
+  sudo -u postgres psql -c "CREATE ROLE ${dbUser} WITH LOGIN SUPERUSER CREATEDB PASSWORD '${dbPass}';" 2>/dev/null || true
+  echo "✅ [PostgreSQL] Role '${dbUser}' created successfully."
+fi
+
+# Idempotently verify and configure database
+echo "🐘 [PostgreSQL Provisioning] Verifying database '${dbName}'..."
+DB_EXISTS=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}';" 2>/dev/null | tr -d '[:space:]')
+if [ "$DB_EXISTS" = "1" ]; then
+  echo "ℹ️  [PostgreSQL] Database '${dbName}' already exists. Skipping database creation."
+  sudo -u postgres psql -c "ALTER DATABASE ${dbName} OWNER TO ${dbUser};" 2>/dev/null || true
+  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
+else
+  echo "🐘 [PostgreSQL] Database '${dbName}' does not exist. Creating database with UTF8, C collation, owner '${dbUser}'..."
+  sudo -u postgres psql -c "CREATE DATABASE ${dbName} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${dbUser};" 2>/dev/null || true
+  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
+  echo "✅ [PostgreSQL] Database '${dbName}' created successfully."
+fi
+
+# Idempotently ensure schema & table privileges
 sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON SCHEMA public TO ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -d ${dbName} -c "ALTER SCHEMA public OWNER TO ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
+echo "✅ [PostgreSQL] Database schema & sequence permissions verified."
 
 # Configure remote listen, disable SSL negotiation resets, and configure robust pg_hba whitelist
 PG_CONF=$(sudo -u postgres psql -tAc "SHOW config_file;" 2>/dev/null | tr -d '[:space:]')
@@ -27949,8 +27972,27 @@ fi
 command -v ufw >/dev/null 2>&1 && ufw allow 5432/tcp || true
 command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 5432 -j ACCEPT 2>/dev/null || true
 
-# Restart PostgreSQL now so remote queries in Stage 2 connect immediately
-systemctl restart postgresql
+# Check if core postgresql.conf parameters (listen_addresses) require service restart
+NEED_PG_RESTART=0
+CUR_LISTEN=$(sudo -u postgres psql -tAc "SHOW listen_addresses;" 2>/dev/null | tr -d '[:space:]')
+if [ "$CUR_LISTEN" != "*" ]; then
+  echo "⚠️  [PostgreSQL] PostgreSQL is not listening on all interfaces (currently '$CUR_LISTEN'). A restart will be performed."
+  NEED_PG_RESTART=1
+fi
+
+# Apply configuration changes without dropping active Synapse connections
+if ! systemctl is-active --quiet postgresql; then
+  echo "▶️  [PostgreSQL] Service is not active. Starting PostgreSQL..."
+  systemctl start postgresql
+elif [ "$NEED_PG_RESTART" = "1" ]; then
+  echo "🔄 [PostgreSQL] Core parameter (listen_addresses) changed. Restarting PostgreSQL..."
+  systemctl restart postgresql
+else
+  echo "🔄 [PostgreSQL] Reloading pg_hba.conf rules safely without dropping active connections..."
+  systemctl reload postgresql 2>/dev/null || sudo -u postgres psql -c "SELECT pg_reload_conf();" 2>/dev/null || true
+  echo "✅ [PostgreSQL] Configuration reloaded safely. Active connections preserved."
+fi
+
 PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELECT 1;' 2>/dev/null && echo "PG_LOCAL_AUTH_OK" || echo "PG_AUTH_NOTE"
 echo "DB_BASE_PROVISION_COMPLETE"
 `;
@@ -28499,14 +28541,20 @@ echo "ELEMENT_WIRING_COMPLETE"
                   logOut('');
                   logOut('🔄 [STAGE 3/3: COORDINATED SEQUENTIAL RESTARTS] Restarting services in strict dependency sequence...');
 
-                  // Step 3.1: Restart PostgreSQL Node First
-                  logOut('   ▶ Step 1/3: Restarting PostgreSQL on Database Server...');
+                  // Step 3.1: Verify PostgreSQL Node First (Non-disruptive, preserve active Synapse connections)
+                  logOut('   ▶ Step 1/3: Verifying PostgreSQL on Database Server (zero-downtime connection check)...');
                   const pgRestartScript = `
-systemctl restart postgresql
-PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELECT 1;' 2>/dev/null && echo "POSTGRESQL_AUTH_VERIFIED_SUCCESS" || echo "POSTGRESQL_RESTART_SUCCESS"
+if systemctl is-active --quiet postgresql; then
+  echo "ℹ️  [PostgreSQL] PostgreSQL is already active and healthy. Reloading configuration safely (preserving active connections)..."
+  systemctl reload postgresql 2>/dev/null || sudo -u postgres psql -c "SELECT pg_reload_conf();" 2>/dev/null || true
+else
+  echo "▶️  [PostgreSQL] PostgreSQL service is inactive. Starting service..."
+  systemctl start postgresql
+fi
+PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELECT 1;' 2>/dev/null && echo "POSTGRESQL_AUTH_VERIFIED_SUCCESS" || echo "POSTGRESQL_RELOAD_SUCCESS"
 `;
                   await runNodeTask(isDbRemote, dbConnProfile, pgRestartScript, 'Database Node', dbNode.host || '127.0.0.1');
-                  logOut('   ✅ Step 1/3 Complete: PostgreSQL is running and accepting queries.');
+                  logOut('   ✅ Step 1/3 Complete: PostgreSQL is active and accepting queries without dropping connections.');
 
                   // Step 3.2: Restart Matrix Synapse & Nginx on Synapse Node Second
                   logOut('   ▶ Step 2/3: Restarting Matrix Synapse & Nginx on Homeserver...');

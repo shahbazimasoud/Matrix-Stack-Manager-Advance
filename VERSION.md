@@ -15,9 +15,17 @@
 
 ---
 
-## Current Panel Version: **v2.51.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.52.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.52.0** - 2026-09-03
+- **Idempotent Database Provisioning & Zero-Downtime PostgreSQL Service Reload**:
+  - **Idempotent Role & Database Provisioning**: Proactively checks if the user role exists in `pg_roles` and database exists in `pg_database` prior to execution. Completely eliminates `role already exists` and `database already exists` errors and prevents destructive recreation during re-deployment or cluster sync.
+  - **Zero-Downtime Non-Disruptive Reload**: Replaced blind `systemctl restart postgresql` calls with safe SIGHUP reloads (`systemctl reload postgresql` / `pg_reload_conf()`). Preserves existing Synapse database connections and permanently resolves `terminating connection due to administrator command` and resulting 502 Bad Gateway errors.
+  - **Intelligent Change Detection**: Detects whether `postgresql.conf` or `pg_hba.conf` actually changed. If configurations are identical and PostgreSQL is already active, restart and reload are skipped entirely.
+  - **Granular Execution Logging**: Added clear informative logging (`[PostgreSQL Provisioning]`) indicating whether entities were created or verified, enabling clear and fast diagnostics.
+  - **Graceful Multi-Node Restart Sequence**: Stage 3 multi-node restart now performs a zero-downtime service health verification and config reload on the database server rather than a destructive service restart.
 
 #### **v2.51.0** - 2026-09-03
 - **Synapse PostgreSQL SSLMode Hardening, Robust pg_hba Access & Startup Diagnostic Health Loop**:

@@ -5043,18 +5043,24 @@ setup_postgres_db() {
   PG_PORT="5432"
   PG_PASS="$(openssl rand -hex 24)"
 
-  echo "🐘 Creating PostgreSQL role for Synapse..."
+  echo "🐘 [PostgreSQL Provisioning] Verifying role for Synapse (${PG_USER})..."
   # cd to /tmp first so sudo -u postgres doesn't print the harmless but
   # confusing "could not change directory to /root/...: Permission denied" warning.
   if ! (cd /tmp && sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${PG_USER}'") | grep -q 1; then
+    echo "🐘 Creating new role '${PG_USER}'..."
     (cd /tmp && sudo -u postgres psql -c "CREATE ROLE ${PG_USER} WITH LOGIN PASSWORD '${PG_PASS}';")
+    echo "✅ Role '${PG_USER}' created successfully."
   else
+    echo "ℹ️  Role '${PG_USER}' already exists — skipping creation and verifying password..."
     (cd /tmp && sudo -u postgres psql -c "ALTER ROLE ${PG_USER} WITH LOGIN PASSWORD '${PG_PASS}';")
+    echo "✅ Role '${PG_USER}' password verified."
   fi
 
-  echo "🐘 Creating PostgreSQL database for Synapse..."
+  echo "🐘 [PostgreSQL Provisioning] Verifying database for Synapse (${PG_DB})..."
   if ! (cd /tmp && sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${PG_DB}'") | grep -q 1; then
+    echo "🐘 Creating new database '${PG_DB}'..."
     (cd /tmp && sudo -u postgres psql -c "CREATE DATABASE ${PG_DB} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${PG_USER};")
+    echo "✅ Database '${PG_DB}' created successfully."
   else
     echo "ℹ️  Database ${PG_DB} already exists — checking collation..."
     local existing_collate
@@ -5334,13 +5340,13 @@ manage_remote_db_access() {
         echo "   in whatever firewall you use (iptables / cloud provider security group)."
       fi
 
-      # 4) Restart PostgreSQL and verify
+      # 4) Reload PostgreSQL safely without terminating active connections
       echo
-      echo "🔄 Restarting PostgreSQL..."
-      systemctl restart postgresql || true
-      sleep 2
+      echo "🔄 Reloading PostgreSQL configuration (preserving active connections)..."
+      systemctl reload postgresql 2>/dev/null || (cd /tmp && sudo -u postgres psql -c "SELECT pg_reload_conf();" 2>/dev/null) || systemctl restart postgresql || true
+      sleep 1
       if systemctl is-active --quiet postgresql; then
-        echo "✅ PostgreSQL restarted successfully."
+        echo "✅ PostgreSQL reloaded successfully."
         echo
         echo "📋 Test the connection from the remote machine with:"
         echo "   psql -h <this-server-ip> -p ${PG_PORT} -U ${PG_USER} -d ${PG_DB}"
@@ -5373,10 +5379,11 @@ manage_remote_db_access() {
       if command -v ufw >/dev/null 2>&1; then
         ufw delete allow from "${rm_cidr}" to any port "${PG_PORT}" proto tcp >/dev/null 2>&1 || true
       fi
-      systemctl restart postgresql || true
-      sleep 2
+      echo "🔄 Reloading PostgreSQL configuration (preserving active connections)..."
+      systemctl reload postgresql 2>/dev/null || (cd /tmp && sudo -u postgres psql -c "SELECT pg_reload_conf();" 2>/dev/null) || systemctl restart postgresql || true
+      sleep 1
       if systemctl is-active --quiet postgresql; then
-        echo "✅ Removed access for ${rm_cidr}. PostgreSQL restarted successfully."
+        echo "✅ Removed access for ${rm_cidr}. PostgreSQL reloaded successfully."
         log_audit "Removed remote DB access for ${rm_cidr}"
       else
         echo "❌ PostgreSQL failed to restart. Check: journalctl -u postgresql -n 50"
@@ -12038,14 +12045,20 @@ role_install_postgres() {
     echo "  ⚠️  Passwords didn't match — try again."
   done
 
-  echo "🐘 Creating role/database..."
+  echo "🐘 [PostgreSQL Provisioning] Verifying role and database..."
   if ! (cd /tmp && sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${user}'") | grep -q 1; then
+    echo "🐘 Creating new role '${user}'..."
     (cd /tmp && sudo -u postgres psql -c "CREATE ROLE ${user} WITH LOGIN PASSWORD '${pass}';")
+    echo "✅ Role '${user}' created."
   else
+    echo "ℹ️  Role '${user}' already exists — skipping creation and verifying password..."
     (cd /tmp && sudo -u postgres psql -c "ALTER ROLE ${user} WITH LOGIN PASSWORD '${pass}';")
+    echo "✅ Role '${user}' password verified."
   fi
   if ! (cd /tmp && sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'") | grep -q 1; then
+    echo "🐘 Creating new database '${db}'..."
     (cd /tmp && sudo -u postgres psql -c "CREATE DATABASE ${db} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${user};")
+    echo "✅ Database '${db}' created."
   else
     echo "ℹ️  Database ${db} already exists — checking collation..."
     local existing_collate
@@ -12092,12 +12105,37 @@ role_install_postgres() {
   done
   pgconf="$(cd /tmp && sudo -u postgres psql -tAc "SHOW config_file;" | tr -d '[:space:]')"
   hbafile="$(cd /tmp && sudo -u postgres psql -tAc "SHOW hba_file;" | tr -d '[:space:]')"
-  [[ -n "${pgconf}" && -f "${pgconf}" ]] && sed -i "s/^#*listen_addresses.*/listen_addresses = '*'/" "${pgconf}"
-  if [[ -n "${hbafile}" && -f "${hbafile}" && -n "${synapse_ip}" ]]; then
-    grep -q "${synapse_ip}" "${hbafile}" 2>/dev/null || \
-      echo "host    ${db}    ${user}    ${synapse_ip}    md5" >> "${hbafile}"
+  local need_pg_restart=0
+  local need_pg_reload=0
+  if [[ -n "${pgconf}" && -f "${pgconf}" ]]; then
+    local cur_listen
+    cur_listen="$(cd /tmp && sudo -u postgres psql -tAc "SHOW listen_addresses;" 2>/dev/null | tr -d '[:space:]')"
+    if [[ "${cur_listen}" != "*" ]]; then
+      sed -i "s/^#*listen_addresses.*/listen_addresses = '*'/" "${pgconf}"
+      need_pg_restart=1
+    fi
   fi
-  systemctl restart postgresql
+  if [[ -n "${hbafile}" && -f "${hbafile}" && -n "${synapse_ip}" ]]; then
+    if ! grep -q "${synapse_ip}" "${hbafile}" 2>/dev/null; then
+      echo "host    ${db}    ${user}    ${synapse_ip}    md5" >> "${hbafile}"
+      need_pg_reload=1
+    fi
+  fi
+  if [[ "${need_pg_restart}" -eq 1 ]]; then
+    echo "🔄 Core parameter (listen_addresses) changed. Restarting PostgreSQL..."
+    systemctl restart postgresql
+  elif [[ "${need_pg_reload}" -eq 1 ]]; then
+    echo "🔄 Reloading PostgreSQL safely (preserving active connections)..."
+    systemctl reload postgresql 2>/dev/null || (cd /tmp && sudo -u postgres psql -c "SELECT pg_reload_conf();" 2>/dev/null) || systemctl restart postgresql
+    echo "✅ PostgreSQL reloaded successfully."
+  else
+    if ! systemctl is-active --quiet postgresql; then
+      echo "▶️  Starting PostgreSQL..."
+      systemctl start postgresql
+    else
+      echo "✅ PostgreSQL is active and configuration is up to date — skipping restart/reload to keep connections active."
+    fi
+  fi
 
   POSTGRES_HOST="$(hostname -I | awk '{print $1}')"
   DEPLOY_PG_DB="${db}"

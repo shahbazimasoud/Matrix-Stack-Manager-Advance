@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.51.0";
+export const PANEL_VERSION = "2.52.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,18 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.52.0",
+    date: "2026-09-03",
+    title: "Idempotent Database Provisioning & Zero-Downtime PostgreSQL Service Reload",
+    changes: [
+      "Idempotent Role & Database Checks: Added proactive existence verification for roles (pg_roles) and databases (pg_database) before execution, eliminating 'role already exists' and 'database already exists' errors and preventing destructive alterations.",
+      "Zero-Downtime Safe Reload Architecture: Replaced disruptive 'systemctl restart postgresql' calls with intelligent SIGHUP reload ('systemctl reload postgresql' / 'pg_reload_conf()') across distributed deployment orchestrator and installer scripts, completely preventing connection resets and 502 Bad Gateway errors on Synapse.",
+      "Smart Configuration Change Detection: PostgreSQL is only restarted when core daemon parameters (such as listen_addresses) actually change on a freshly installed host; existing active databases retain all active connections uninterrupted.",
+      "Comprehensive Provisioning Telemetry & Logging: Detailed console and audit output at every provisioning stage, explicitly logging whether roles/databases were newly created or safely verified.",
+      "Safe Multi-Node Deployment Stages: Refactored Stage 3 coordination to verify and reload PostgreSQL services non-disruptively instead of abruptly terminating active Synapse database connections."
+    ]
+  },
   {
     version: "2.51.0",
     date: "2026-09-03",
