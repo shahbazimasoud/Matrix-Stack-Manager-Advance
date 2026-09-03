@@ -278,13 +278,16 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
     };
 
     if (deploymentMode === 'distributed') {
+      const resolvedSynPass = synapsePassword || dbSshPassword || elementSshPassword;
+      const resolvedSynKey = synapsePrivateKey || dbPrivateKey || elementPrivateKey;
+
       finalConfig.synapseNode = {
         host: synapseHost.trim() || effectivePublicIp,
         port: Number(synapsePort) || 22,
         username: synapseUsername.trim() || 'root',
         authType: synapseAuthType,
-        password: synapsePassword,
-        privateKey: synapsePrivateKey,
+        password: resolvedSynPass,
+        privateKey: resolvedSynKey,
       };
 
       finalConfig.databaseNode = {
@@ -292,8 +295,8 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
         port: Number(dbSshPort) || 22,
         username: dbUsername.trim() || 'root',
         authType: dbAuthType,
-        password: dbSshPassword,
-        privateKey: dbPrivateKey,
+        password: dbSshPassword || resolvedSynPass,
+        privateKey: dbPrivateKey || resolvedSynKey,
         dbName: dbName.trim() || 'synapse',
         dbUser: dbUser.trim() || 'synapse_user',
         dbPass: dbPass.trim(),
@@ -305,8 +308,8 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
         port: Number(elementSshPort) || 22,
         username: elementUsername.trim() || 'root',
         authType: elementAuthType,
-        password: elementSshPassword,
-        privateKey: elementPrivateKey,
+        password: elementSshPassword || resolvedSynPass,
+        privateKey: elementPrivateKey || resolvedSynKey,
       };
     }
 
@@ -880,13 +883,33 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                           ? 'bg-rose-50/30 border-rose-200 shadow-sm' 
                           : 'bg-slate-950/60 border-rose-500/20 shadow-md shadow-rose-950/10'
                       }`}>
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className={`p-2 rounded-xl ${isLightMode ? 'bg-rose-100 text-rose-700' : 'bg-rose-500/20 text-rose-400'}`}>
-                            <Server className="w-4 h-4" />
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className={`p-2 rounded-xl ${isLightMode ? 'bg-rose-100 text-rose-700' : 'bg-rose-500/20 text-rose-400'}`}>
+                              <Server className="w-4 h-4" />
+                            </div>
+                            <h4 className={`text-sm font-bold ${isLightMode ? 'text-slate-800' : 'text-white'}`}>
+                              {t.nodeSynapseTitle}
+                            </h4>
                           </div>
-                          <h4 className={`text-sm font-bold ${isLightMode ? 'text-slate-800' : 'text-white'}`}>
-                            {t.nodeSynapseTitle}
-                          </h4>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSynapseHost('localhost');
+                              setSynapsePort(22);
+                              setSynapseUsername('root');
+                              setSynapsePassword('');
+                            }}
+                            className={`text-[11px] px-2.5 py-1 rounded-lg border font-medium transition-all ${
+                              synapseHost === 'localhost' || synapseHost === '127.0.0.1'
+                                ? 'bg-rose-500/20 text-rose-400 border-rose-500/30 font-bold'
+                                : isLightMode ? 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200' : 'bg-slate-800/80 text-slate-300 border-white/10 hover:bg-slate-700'
+                            }`}
+                            title="اجرای مستقیم روی همین سروری که پنل روی آن نصب است"
+                          >
+                            {synapseHost === 'localhost' || synapseHost === '127.0.0.1' ? '✓ سرور محلی (Local)' : 'تنظیم به عنوان سرور محلی'}
+                          </button>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -959,6 +982,10 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                               />
                             )}
                           </div>
+                        </div>
+
+                        <div className="mt-2.5 pt-2 border-t border-slate-200/40 dark:border-white/5 flex items-center justify-between text-[10px] text-slate-500">
+                          <span>💡 در صورتی که گره Synapse همان سرور جاری پنل باشد، دستورات به صورت خودکار محلی اجرا شده و نیازی به رمز عبور SSH نیست.</span>
                         </div>
                       </div>
 

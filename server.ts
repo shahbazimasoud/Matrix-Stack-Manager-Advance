@@ -43,7 +43,8 @@ import {
   ServerNodeConfig,
   resolveNodeProfile,
   cleanAndParseJSON,
-  clearSSHConnectionCache
+  clearSSHConnectionCache,
+  isLocalHostAddress
 } from "./server/db";
 
 import {
@@ -27678,43 +27679,65 @@ async function startServer() {
                   const elemVersion = config.elementOnlineVersion || '1.11.55';
                   const ts = Date.now();
 
-                  // Create dedicated connection profiles for SSH execution
-                  const isDbRemote = Boolean(dbNode.host && dbNode.host !== 'localhost' && dbNode.host !== '127.0.0.1');
+                  // Create dedicated connection profiles for SSH execution with smart local detection & credential fallback
+                  const defaultUsername = activeConn?.username || config.username || 'root';
+                  const defaultPassword = activeConn?.password || config.password || '';
+                  const defaultPrivateKey = activeConn?.privateKey || config.privateKey || '';
+
+                  // Synapse credentials
+                  const synUser = synNode.username || defaultUsername;
+                  const synPass = (synNode.password !== undefined && synNode.password !== '') ? synNode.password : defaultPassword;
+                  const synKey = (synNode.privateKey !== undefined && synNode.privateKey !== '') ? synNode.privateKey : defaultPrivateKey;
+                  const synAuth = synNode.authType || (synKey ? 'key' : 'password');
+
+                  // Database credentials
+                  const dbSshUser = dbNode.username || synUser || defaultUsername;
+                  const dbSshPass = (dbNode.password !== undefined && dbNode.password !== '') ? dbNode.password : (synPass || defaultPassword);
+                  const dbSshKey = (dbNode.privateKey !== undefined && dbNode.privateKey !== '') ? dbNode.privateKey : (synKey || defaultPrivateKey);
+                  const dbSshAuth = dbNode.authType || (dbSshKey ? 'key' : 'password');
+
+                  // Element credentials
+                  const elemSshUser = elemNode.username || synUser || defaultUsername;
+                  const elemSshPass = (elemNode.password !== undefined && elemNode.password !== '') ? elemNode.password : (synPass || defaultPassword);
+                  const elemSshKey = (elemNode.privateKey !== undefined && elemNode.privateKey !== '') ? elemNode.privateKey : (synKey || defaultPrivateKey);
+                  const elemSshAuth = elemNode.authType || (elemSshKey ? 'key' : 'password');
+
+                  const isDbRemote = !isLocalHostAddress(dbNode.host);
                   const dbConnProfile: ConnectionProfile = {
                     id: `deploy_db_${ts}`,
                     name: 'Database Node',
                     host: dbNode.host || '127.0.0.1',
-                    port: Number(dbNode.port) || 22,
-                    username: dbNode.username || 'root',
-                    password: dbNode.password,
-                    privateKey: dbNode.privateKey,
-                    authType: dbNode.authType || (dbNode.privateKey ? 'key' : 'password'),
+                    port: Number(dbNode.port || activeConn?.port) || 22,
+                    username: dbSshUser,
+                    password: dbSshPass,
+                    privateKey: dbSshKey,
+                    authType: dbSshAuth,
                     isActive: true
                   };
 
-                  const isSynRemote = Boolean(synNode.host && synNode.host !== 'localhost' && synNode.host !== '127.0.0.1');
+                  const isSynRemote = !isLocalHostAddress(synNode.host || config.PUBLIC_IP);
                   const synConnProfile: ConnectionProfile = {
                     id: `deploy_syn_${ts}`,
                     name: 'Synapse Node',
-                    host: synNode.host || config.PUBLIC_IP || '127.0.0.1',
-                    port: Number(synNode.port) || 22,
-                    username: synNode.username || 'root',
-                    password: synNode.password,
-                    privateKey: synNode.privateKey,
-                    authType: synNode.authType || (synNode.privateKey ? 'key' : 'password'),
+                    host: synHost,
+                    port: Number(synNode.port || activeConn?.port) || 22,
+                    username: synUser,
+                    password: synPass,
+                    privateKey: synKey,
+                    authType: synAuth,
                     isActive: true
                   };
 
-                  const isElemRemote = Boolean(elemNode.host && elemNode.host !== 'localhost' && elemNode.host !== '127.0.0.1');
+                  const isElemRemote = !isLocalHostAddress(elemNode.host);
                   const elemConnProfile: ConnectionProfile = {
                     id: `deploy_elem_${ts}`,
                     name: 'Element Node',
                     host: elemNode.host || '127.0.0.1',
-                    port: Number(elemNode.port) || 22,
-                    username: elemNode.username || 'root',
-                    password: elemNode.password,
-                    privateKey: elemNode.privateKey,
-                    authType: elemNode.authType || (elemNode.privateKey ? 'key' : 'password'),
+                    port: Number(elemNode.port || activeConn?.port) || 22,
+                    username: elemSshUser,
+                    password: elemSshPass,
+                    privateKey: elemSshKey,
+                    authType: elemSshAuth,
                     isActive: true
                   };
 
@@ -27736,17 +27759,34 @@ async function startServer() {
                       }
                     };
 
-                    if (isRemote) {
-                      logOut(`> [${tag}] Connecting via SSH (${profile.username || 'root'}@${profile.host}:${profile.port || 22})...`);
-                      await executeStreamingSSHCommand(profile, script, undefined, lineOut, lineErr);
-                    } else {
-                      logOut(`> [${tag}] Executing script locally (${desc})...`);
+                    const executeDirectLocal = async (reason?: string) => {
+                      if (reason) {
+                        logOut(`> [${tag}] ${reason}`);
+                      } else {
+                        logOut(`> [${tag}] Executing script directly on local host (${desc})...`);
+                      }
                       await new Promise<void>((resolve, reject) => {
                         const proc = exec(script);
                         proc.stdout?.on('data', d => lineOut(d.toString()));
                         proc.stderr?.on('data', d => lineErr(d.toString()));
                         proc.on('close', code => code === 0 ? resolve() : reject(new Error(`[${tag}] execution failed with code ${code}`)));
                       });
+                    };
+
+                    if (isRemote) {
+                      try {
+                        logOut(`> [${tag}] Connecting via SSH (${profile.username || 'root'}@${profile.host}:${profile.port || 22})...`);
+                        await executeStreamingSSHCommand(profile, script, undefined, lineOut, lineErr);
+                      } catch (sshErr: any) {
+                        if (isLocalHostAddress(profile.host)) {
+                          logOut(`⚠️ [${tag}] SSH connection to ${profile.host} failed (${sshErr.message}), but this host is a local interface on this server. Auto-recovering via direct local execution...`);
+                          await executeDirectLocal();
+                        } else {
+                          throw sshErr;
+                        }
+                      }
+                    } else {
+                      await executeDirectLocal();
                     }
                   };
 

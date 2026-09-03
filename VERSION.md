@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.46.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.47.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.47.0** - 2026-09-03
+- **SSH Handshake Resiliency, Localhost Detection & Distributed Install Recovery**:
+  - **SSH Handshake Timeout Resolution**: Extended SSH client with full modern KEX (`curve25519`, `ecdh`, `diffie-hellman`), HMAC algorithms, banner consumption, and `keyboard-interactive` authentication to support Ubuntu 24.04 (Noble) servers and eliminate 60s timeout hangs.
+  - **Local Interface Auto-Detection & Fallback**: Added intelligent detection of local network interfaces (`isLocalHostAddress`). If an SSH handshake times out or is blocked on a local node, the system automatically falls back to direct host execution.
+  - **Distributed Credential Inheritance**: Automatically cascade parent or sibling SSH credentials (passwords, private keys) to distributed Synapse, PostgreSQL, and Element nodes when not explicitly configured.
+  - **Install Wizard Local Server Helper**: Added 1-click 'Local Server' toggle for Synapse node in distributed install wizard for direct local host execution without SSH loopback requirements.
 
 #### **v2.46.0** - 2026-09-03
 - **Collapsible Server Status Cards, Light Theme Harmonization, & Single-Line Action Buttons**:

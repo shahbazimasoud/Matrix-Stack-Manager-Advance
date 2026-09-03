@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.46.0";
+export const PANEL_VERSION = "2.47.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.47.0",
+    date: "2026-09-03",
+    title: "SSH Handshake Resiliency, Localhost Detection & Distributed Install Recovery",
+    changes: [
+      "SSH Handshake Timeout Resolution: Extended SSH client with full modern KEX (curve25519, ecdh, diffie-hellman), HMAC algorithms, banner consumption, and keyboard-interactive authentication to support Ubuntu 24.04 (Noble) servers.",
+      "Local Interface Auto-Detection & Fallback: Added intelligent detection of local network interfaces (isLocalHostAddress). If an SSH handshake times out or is blocked on a local node, the system automatically falls back to direct host execution.",
+      "Distributed Credential Inheritance: Automatically cascade parent or sibling SSH credentials (passwords, private keys) to distributed Synapse, PostgreSQL, and Element nodes when not explicitly configured.",
+      "Install Wizard Local Server Helper: Added 1-click 'Local Server' toggle for Synapse node in distributed install wizard for direct local host execution without SSH loopback requirements."
+    ]
+  },
   {
     version: "2.46.0",
     date: "2026-09-03",

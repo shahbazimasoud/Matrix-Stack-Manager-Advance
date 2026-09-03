@@ -4,6 +4,7 @@
  */
 
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { Client } from "pg";
 import { Client as SSHClient } from "ssh2";
@@ -613,6 +614,25 @@ export function clearSSHConnectionCache(target?: string): void {
   }
 }
 
+export function isLocalHostAddress(host?: string): boolean {
+  if (!host) return true;
+  const h = host.trim().toLowerCase();
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0.0.0.0' || h === '') {
+    return true;
+  }
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const net of interfaces[name] || []) {
+        if (net.address && net.address.toLowerCase() === h) {
+          return true;
+        }
+      }
+    }
+  } catch {}
+  return false;
+}
+
 function getSSHKey(config: ConnectionProfile): string {
   return `${config.id || "node"}_${config.host}_${config.port || 22}_${config.username || "root"}`;
 }
@@ -638,6 +658,18 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
       isHandshakeDone = true;
       sshPool.set(key, { conn, isReady: true, lastUsed: Date.now() });
       resolve(conn);
+    });
+
+    conn.on("keyboard-interactive", (_name, _instructions, _instructionsLang, prompts, finish) => {
+      if (prompts && prompts.length > 0 && config.password) {
+        finish(prompts.map(() => config.password || ''));
+      } else {
+        finish([]);
+      }
+    });
+
+    conn.on("banner", (_msg) => {
+      // Cleanly consume MOTD / banners
     });
 
     conn.on("error", (err: any) => {
@@ -667,7 +699,20 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
       readyTimeout: 60000,
       keepaliveInterval: 10000,
       keepaliveCountMax: 30,
+      tryKeyboard: true,
       algorithms: {
+        kex: [
+          'curve25519-sha256',
+          'curve25519-sha256@libssh.org',
+          'ecdh-sha2-nistp256',
+          'ecdh-sha2-nistp384',
+          'ecdh-sha2-nistp521',
+          'diffie-hellman-group-exchange-sha256',
+          'diffie-hellman-group14-sha256',
+          'diffie-hellman-group14-sha1',
+          'diffie-hellman-group-exchange-sha1',
+          'diffie-hellman-group1-sha1'
+        ],
         serverHostKey: [
           'ssh-ed25519',
           'ecdsa-sha2-nistp256',
@@ -686,6 +731,14 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
           'aes128-ctr',
           'aes192-ctr',
           'aes256-ctr'
+        ],
+        hmac: [
+          'hmac-sha2-256',
+          'hmac-sha2-512',
+          'hmac-sha1',
+          'hmac-sha2-256-etm@openssh.com',
+          'hmac-sha2-512-etm@openssh.com',
+          'hmac-sha1-etm@openssh.com'
         ]
       }
     };
@@ -754,11 +807,11 @@ export function resolveNodeProfile(
         ...config,
         id: `${config.id}_db_node`,
         host: config.databaseNode.host,
-        port: config.databaseNode.port || 22,
-        username: config.databaseNode.username || 'root',
-        password: config.databaseNode.password,
-        privateKey: config.databaseNode.privateKey,
-        authType: config.databaseNode.authType || 'password',
+        port: config.databaseNode.port || config.port || 22,
+        username: config.databaseNode.username || config.username || 'root',
+        password: (config.databaseNode.password !== undefined && config.databaseNode.password !== '') ? config.databaseNode.password : config.password,
+        privateKey: (config.databaseNode.privateKey !== undefined && config.databaseNode.privateKey !== '') ? config.databaseNode.privateKey : config.privateKey,
+        authType: config.databaseNode.authType || config.authType || 'password',
         dbHost: config.databaseNode.dbHost || '127.0.0.1',
         dbPort: config.databaseNode.dbPort || 5432,
         dbName: config.databaseNode.dbName || 'synapse',
@@ -771,11 +824,11 @@ export function resolveNodeProfile(
         ...config,
         id: `${config.id}_element_node`,
         host: config.elementNode.host,
-        port: config.elementNode.port || 22,
-        username: config.elementNode.username || 'root',
-        password: config.elementNode.password,
-        privateKey: config.elementNode.privateKey,
-        authType: config.elementNode.authType || 'password',
+        port: config.elementNode.port || config.port || 22,
+        username: config.elementNode.username || config.username || 'root',
+        password: (config.elementNode.password !== undefined && config.elementNode.password !== '') ? config.elementNode.password : config.password,
+        privateKey: (config.elementNode.privateKey !== undefined && config.elementNode.privateKey !== '') ? config.elementNode.privateKey : config.privateKey,
+        authType: config.elementNode.authType || config.authType || 'password',
         elementConfigPath: config.elementNode.elementConfigPath || config.elementConfigPath,
       };
     }
@@ -784,11 +837,11 @@ export function resolveNodeProfile(
         ...config,
         id: `${config.id}_synapse_node`,
         host: config.synapseNode.host,
-        port: config.synapseNode.port || 22,
-        username: config.synapseNode.username || 'root',
-        password: config.synapseNode.password,
-        privateKey: config.synapseNode.privateKey,
-        authType: config.synapseNode.authType || 'password',
+        port: config.synapseNode.port || config.port || 22,
+        username: config.synapseNode.username || config.username || 'root',
+        password: (config.synapseNode.password !== undefined && config.synapseNode.password !== '') ? config.synapseNode.password : config.password,
+        privateKey: (config.synapseNode.privateKey !== undefined && config.synapseNode.privateKey !== '') ? config.synapseNode.privateKey : config.privateKey,
+        authType: config.synapseNode.authType || config.authType || 'password',
         adminUsername: config.synapseNode.adminUsername || config.adminUsername,
         adminPassword: config.synapseNode.adminPassword || config.adminPassword,
         adminAccessToken: config.synapseNode.adminAccessToken || config.adminAccessToken,
@@ -863,32 +916,51 @@ export async function executeStreamingSSHCommand(
   onErr?: (data: string) => void
 ): Promise<number> {
   const targetConfig = resolveNodeProfile(config, targetNode);
-  const conn = await getOrCreateSSHClient(targetConfig);
-  return new Promise((resolve, reject) => {
-    let resolved = false;
-    conn.exec(cmd, (err, stream) => {
-      if (err) return reject(err);
-      stream.on('close', (code: number) => {
-        if (!resolved) {
-          resolved = true;
-          resolve(code || 0);
+  const attemptExecute = async (isRetry = false): Promise<number> => {
+    let conn: SSHClient;
+    try {
+      conn = await getOrCreateSSHClient(targetConfig);
+    } catch (err: any) {
+      if (!isRetry) {
+        sshPool.delete(getSSHKey(targetConfig));
+        conn = await getOrCreateSSHClient(targetConfig);
+      } else {
+        throw err;
+      }
+    }
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+      conn.exec(cmd, (err, stream) => {
+        if (err) {
+          sshPool.delete(getSSHKey(targetConfig));
+          if (!isRetry) {
+            return attemptExecute(true).then(resolve).catch(reject);
+          }
+          return reject(err);
         }
-      });
-      stream.on('error', (streamErr: any) => {
-        if (!resolved) {
-          resolved = true;
-          reject(streamErr);
-        }
-      });
-      stream.on('data', (d: any) => {
-        if (onData) onData(d.toString());
-      });
-      stream.stderr.on('data', (d: any) => {
-        if (onErr) onErr(d.toString());
-        else if (onData) onData(d.toString());
+        stream.on('close', (code: number) => {
+          if (!resolved) {
+            resolved = true;
+            resolve(code || 0);
+          }
+        });
+        stream.on('error', (streamErr: any) => {
+          if (!resolved) {
+            resolved = true;
+            reject(streamErr);
+          }
+        });
+        stream.on('data', (d: any) => {
+          if (onData) onData(d.toString());
+        });
+        stream.stderr.on('data', (d: any) => {
+          if (onErr) onErr(d.toString());
+          else if (onData) onData(d.toString());
+        });
       });
     });
-  });
+  };
+  return attemptExecute(false);
 }
 
 // Dedicated helper to upload local file to remote server via SFTP over SSH connection
