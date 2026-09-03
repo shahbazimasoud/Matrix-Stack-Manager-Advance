@@ -338,29 +338,73 @@ chmod +x "$INSTALL_DIR"/*.sh 2>/dev/null || true
 # ------------------------------------------------------------------------------
 log_step "Installing NPM dependencies..."
 
-# Configure NPM settings to be highly resilient
-log_info "Configuring NPM with resilient timeouts and retry settings..."
-npm config set fetch-retry-maxtimeout 180000
-npm config set fetch-retry-mintimeout 30000
-npm config set fetch-retries 10
-npm config set maxsockets 5
+# Configure fast, non-blocking NPM settings:
+# - Disable audit and funding network calls that hang on restricted networks
+# - Set realistic timeouts (15s instead of 180s)
+# - Restore concurrent sockets (15 instead of throttling to 5)
+npm config set fetch-retry-maxtimeout 15000 2>/dev/null || true
+npm config set fetch-retry-mintimeout 3000 2>/dev/null || true
+npm config set fetch-retries 2 2>/dev/null || true
+npm config set maxsockets 15 2>/dev/null || true
+npm config set audit false 2>/dev/null || true
+npm config set fund false 2>/dev/null || true
 
-# Try standard npm installation first
-log_info "Attempt 1: Installing dependencies using standard npm registry..."
-if ! npm install; then
-  log_warning "Standard npm install timed out or failed. Attempt 2: Switching to high-speed mirror registry (registry.npmmirror.com)..."
-  npm config set registry https://registry.npmmirror.com
-  
-  log_info "Retrying npm installation via mirror..."
-  if ! npm install; then
-    log_error "NPM installation failed even with the high-speed mirror registry."
-    log_error "Please check your server's network connection, firewall rules, or DNS settings."
-    exit 1
+# Test registry speed to automatically pick the fastest endpoint
+log_info "Detecting optimal NPM registry speed..."
+REGISTRY="https://registry.npmjs.org"
+if ! curl -fsSL -m 3 "https://registry.npmjs.org" &>/dev/null; then
+  log_warning "Standard npm registry (registry.npmjs.org) has high latency or is unreachable. Using high-speed mirror (registry.npmmirror.com)..."
+  REGISTRY="https://registry.npmmirror.com"
+fi
+npm config set registry "$REGISTRY" 2>/dev/null || true
+
+INSTALL_SUCCESS=false
+
+# Method 1: npm ci (clean, ultra-fast, deterministic directly from package-lock.json)
+if [ -f "package-lock.json" ]; then
+  log_info "Attempt 1: Installing dependencies using npm ci with registry: $REGISTRY ..."
+  if npm ci --prefer-offline --no-audit --no-fund --progress=false; then
+    INSTALL_SUCCESS=true
+    log_success "Dependencies successfully installed via npm ci."
+  else
+    log_warning "npm ci encountered an issue. Falling back to npm install..."
   fi
 fi
 
-# Restore default registry configuration to avoid any downstream issues for other tasks
-npm config delete registry
+# Method 2: npm install fallback
+if [ "$INSTALL_SUCCESS" = false ]; then
+  log_info "Attempt 2: Installing dependencies using npm install --no-audit --no-fund ..."
+  if npm install --prefer-offline --no-audit --no-fund --progress=false; then
+    INSTALL_SUCCESS=true
+    log_success "Dependencies successfully installed via npm install."
+  fi
+fi
+
+# Method 3: Switch to alternate mirror if first choice failed
+if [ "$INSTALL_SUCCESS" = false ]; then
+  if [ "$REGISTRY" = "https://registry.npmjs.org" ]; then
+    FALLBACK_REGISTRY="https://registry.npmmirror.com"
+  else
+    FALLBACK_REGISTRY="https://registry.npmjs.org"
+  fi
+  log_warning "Attempt 3: Switching to fallback mirror ($FALLBACK_REGISTRY)..."
+  npm config set registry "$FALLBACK_REGISTRY" 2>/dev/null || true
+  if npm install --prefer-offline --no-audit --no-fund --progress=false; then
+    INSTALL_SUCCESS=true
+    log_success "Dependencies successfully installed via fallback mirror."
+  fi
+fi
+
+# Restore default registry configuration
+npm config delete registry 2>/dev/null || true
+npm config delete audit 2>/dev/null || true
+npm config delete fund 2>/dev/null || true
+
+if [ "$INSTALL_SUCCESS" = false ]; then
+  log_error "NPM installation failed across all registries."
+  log_error "Please check your server's network connection, firewall rules, or DNS settings."
+  exit 1
+fi
 
 log_step "Generating password hashes and seeding database with Owner credentials..."
 
@@ -521,48 +565,7 @@ cat <<EOF > "$INSTALL_DIR/.env"
 PORT=3000
 EOF
 
-log_step "Setting up Python 3 virtual environment and dependencies..."
-python3 -m venv "$INSTALL_DIR/venv"
-
-PIP_CMD="$INSTALL_DIR/venv/bin/pip"
-
-# Configure pip with resilient timeout and retry options
-log_info "Configuring Pip with resilient timeouts and retry settings..."
-if ! "$PIP_CMD" install --default-timeout=30 --retries 3 --upgrade pip; then
-  log_warning "Pip upgrade timed out or failed. Proceeding with the default pip version."
-fi
-
-# Attempt standard installation first
-log_info "Attempt 1: Installing Python dependencies using standard PyPI registry with extended timeouts..."
-if ! "$PIP_CMD" install --default-timeout=180 --retries 5 -r "$INSTALL_DIR/requirements.txt"; then
-  log_warning "Standard PyPI installation timed out or failed. Attempt 2: Switching to high-speed Iranian & international mirror registries..."
-  
-  MIRROR_SUCCESS=false
-  # High-speed reliable mirrors (highly stable international and local mirrors first)
-  MIRRORS=(
-    "https://pypi.tuna.tsinghua.edu.cn/simple"
-    "https://mirrors.aliyun.com/pypi/simple"
-    "https://mirror.snappclouddns.ir/pypi/simple"
-    "https://mirror.iranserver.com/pypi/simple"
-  )
-  
-  for MIRROR in "${MIRRORS[@]}"; do
-    log_info "Retrying pip installation via mirror: $MIRROR ..."
-    # Extract host name for --trusted-host parameter to bypass certificate validation blocks
-    HOST=$(echo "$MIRROR" | awk -F/ '{print $3}')
-    if "$PIP_CMD" install --default-timeout=180 --retries 5 --trusted-host "$HOST" -i "$MIRROR" -r "$INSTALL_DIR/requirements.txt"; then
-      MIRROR_SUCCESS=true
-      log_success "Successfully installed Python dependencies using mirror: $MIRROR"
-      break
-    fi
-  done
-  
-  if [ "$MIRROR_SUCCESS" = false ]; then
-    log_warning "Python dependencies installation could not be completed from PyPI or mirrors."
-    log_warning "The Node.js matrix panel will still compile and run normally."
-  fi
-fi
-
+# Native Node.js backend - Python virtual environment is not needed
 log_step "Compiling Panel assets (Frontend & Backend Server) via NPM..."
 npm run build
 

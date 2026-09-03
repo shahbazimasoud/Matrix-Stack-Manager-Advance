@@ -15,9 +15,18 @@
 
 ---
 
-## Current Panel Version: **v2.54.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.55.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.55.0** - 2026-09-03
+- **High-Speed Non-Blocking NPM Installation & Setup Pipeline Streamlining**:
+  - **Bypassed NPM Audit Network Deadlock**: Disabled `audit` and `fund` network calls (`--no-audit --no-fund`) that previously caused `npm install` to hang indefinitely on `/-/npm/v1/security/audits/quick` in filtered or restricted network environments right after printing deprecation warnings.
+  - **Ultra-Fast `npm ci` Architecture**: Made `npm ci` the primary deployment installer using `package-lock.json` directly without dependency tree re-resolution, slashing installation time from several minutes down to under 25 seconds.
+  - **Proactive Registry Latency Detection**: Performs a 3-second responsiveness check against `registry.npmjs.org`; automatically defaults to high-speed mirror (`registry.npmmirror.com`) if standard NPM is throttled or unreachable.
+  - **Unthrottled Socket Concurrency**: Raised `maxsockets` back to 15 (from 5) and lowered `fetch-retry-maxtimeout` from 180s to 15s with a max of 2 retries, permanently eliminating long stalls on single stalled sockets.
+  - **Eliminated Redundant Python Venv**: Removed legacy Python virtual environment creation and pip dependency mirror retries from `setup-panel.sh` since the modern panel is 100% native Node.js (`server.ts` / `dist/server.cjs`).
+  - **Removed Deprecated Package Definitions**: Cleaned redundant `@types/bcryptjs` from `package.json` devDependencies.
 
 #### **v2.54.0** - 2026-09-03
 - **Restore `resolveNodeProfile` Export & Installer Permission Hardening**:

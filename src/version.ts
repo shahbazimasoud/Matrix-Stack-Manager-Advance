@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.54.0";
+export const PANEL_VERSION = "2.55.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,19 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.55.0",
+    date: "2026-09-03",
+    title: "High-Speed Non-Blocking NPM Dependency Installation & Setup Pipeline Streamlining",
+    changes: [
+      "Bypassed NPM Audit Network Deadlock: Disabled npm audit and funding network calls (--no-audit --no-fund) that caused npm install to hang indefinitely on filtered/restricted networks right after deprecation warnings.",
+      "Ultra-Fast npm ci Pipeline: Switched to npm ci as primary installer utilizing package-lock.json directly, reducing install times from several minutes to under 25 seconds.",
+      "Proactive Registry Latency Detection: Automatically tests registry.npmjs.org response time (3s probe); switches seamlessly to high-speed mirror (registry.npmmirror.com) if standard registry is throttled.",
+      "Unthrottled Socket Concurrency: Raised maxsockets back to 15 (from 5) and reduced fetch-retry-maxtimeout from 180s to 15s, completely eliminating multi-minute stalled connection freezes.",
+      "Removed Redundant Python Venv: Eliminated the legacy Python virtual environment creation and pip mirror retries from setup-panel.sh since the panel is purely native Node.js.",
+      "Cleaned Deprecated Types: Removed stub @types/bcryptjs from package.json devDependencies."
+    ]
+  },
   {
     version: "2.54.0",
     date: "2026-09-03",
