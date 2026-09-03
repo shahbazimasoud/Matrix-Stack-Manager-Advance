@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.48.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.49.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.49.0** - 2026-09-03
+- **502 Bad Gateway Resolution for Synapse & Element Nodes, Full Multi-Lingual Wizard Localization**:
+  - **Synapse 502 Bad Gateway Resolution**: Preseeds debconf for non-interactive installs, installs required `psycopg2-binary` and `pyyaml` into virtualenvs, applies python-based safe `homeserver.yaml` configuration with `0.0.0.0:8008` listeners, fixes `matrix-synapse` service permissions, and adds a health-check wait loop.
+  - **Element Web 502 Bad Gateway Resolution**: Purges conflicting sites from `/etc/nginx/sites-enabled/` so residual Synapse proxy directives do not intercept Element requests, and serves the static Element client directly with `www-data` permissions.
+  - **PostgreSQL Node Reliability**: Generates clean prioritized `pg_hba.conf` whitelist and restarts PostgreSQL immediately in Stage 1 so cross-node connection attempts during Stage 2 succeed seamlessly.
+  - **Complete Multi-Lingual Cleanliness**: Removed all hardcoded Persian strings from `InstallWizardModal.tsx` ("Configure Matrix Enterprise Stack") ensuring pristine multi-language panel localization.
 
 #### **v2.48.0** - 2026-09-03
 - **SSH Connection Pool Optimization, Nginx Default Purge & Element 403 Forbidden Fix**:

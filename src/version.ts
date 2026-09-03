@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.48.0";
+export const PANEL_VERSION = "2.49.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.49.0",
+    date: "2026-09-03",
+    title: "502 Bad Gateway Resolution for Synapse & Element Nodes, Full Multi-Lingual Wizard Localization",
+    changes: [
+      "Synapse 502 Bad Gateway Resolution: Preseeds debconf for non-interactive installs, installs required psycopg2-binary and pyyaml into virtualenvs, applies python-based safe homeserver.yaml configuration with 0.0.0.0:8008 listeners, fixes matrix-synapse service permissions, and adds a health-check wait loop.",
+      "Element Web 502 Bad Gateway Resolution: Purges conflicting sites from /etc/nginx/sites-enabled/ so residual Synapse proxy directives do not intercept Element requests, and serves the static Element client directly with www-data permissions.",
+      "PostgreSQL Node Reliability: Generates clean prioritized pg_hba.conf whitelist and restarts PostgreSQL immediately in Stage 1 so cross-node connection attempts during Stage 2 succeed seamlessly.",
+      "Complete Multi-Lingual Cleanliness: Removed all hardcoded Persian strings from InstallWizardModal.tsx ('Configure Matrix Enterprise Stack') ensuring pristine multi-language panel localization."
+    ]
+  },
   {
     version: "2.48.0",
     date: "2026-09-03",

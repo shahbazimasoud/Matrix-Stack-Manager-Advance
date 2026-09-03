@@ -624,12 +624,10 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                         </div>
                         <div>
                           <div className={`text-xs font-bold ${isLightMode ? 'text-indigo-950' : 'text-indigo-200'}`}>
-                            {lang === 'fa' ? 'بارگذاری خودکار مشخصات از پروفایل اتصال' : 'Pre-fill from Saved Connection Profile'}
+                            Pre-fill from Saved Connection Profile
                           </div>
                           <div className={`text-[11px] ${isLightMode ? 'text-indigo-600/80' : 'text-indigo-400/80'}`}>
-                            {lang === 'fa' 
-                              ? 'اطلاعات SSH سرور سیناپس، دیتابیس و المنت به‌طور خودکار پر می‌شود' 
-                              : 'Synapse, Database, and Element SSH credentials will be mapped from this profile'}
+                            Synapse, Database, and Element SSH credentials will be mapped from this profile
                           </div>
                         </div>
                       </div>
@@ -670,7 +668,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                               setTimeout(() => setProfileLoadedNotice(null), 3000);
                             }
                           }}
-                          title={lang === 'fa' ? 'بارگذاری مجدد' : 'Reload'}
+                          title="Reload Profile"
                           className={`p-2 rounded-xl border text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer shrink-0 ${
                             isLightMode 
                               ? 'bg-white border-indigo-200 text-indigo-700 hover:bg-indigo-50' 
@@ -678,7 +676,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                           }`}
                         >
                           <RotateCw className="w-3.5 h-3.5" />
-                          <span className="hidden md:inline">{lang === 'fa' ? 'بارگذاری مجدد' : 'Reload'}</span>
+                          <span className="hidden md:inline">Reload</span>
                         </button>
                       </div>
                     </div>
@@ -694,9 +692,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                     >
                       <Check className="w-3.5 h-3.5" />
                       <span>
-                        {lang === 'fa' 
-                          ? `مشخصات سرورها با موفقیت از پروفایل "${profileLoadedNotice}" جایگذاری شد.`
-                          : `Credentials loaded from profile "${profileLoadedNotice}".`}
+                        {`Credentials loaded from profile "${profileLoadedNotice}".`}
                       </span>
                     </motion.div>
                   )}
@@ -906,9 +902,9 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                                 ? 'bg-rose-500/20 text-rose-400 border-rose-500/30 font-bold'
                                 : isLightMode ? 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200' : 'bg-slate-800/80 text-slate-300 border-white/10 hover:bg-slate-700'
                             }`}
-                            title="اجرای مستقیم روی همین سروری که پنل روی آن نصب است"
+                            title="Direct execution on this local panel server without remote SSH"
                           >
-                            {synapseHost === 'localhost' || synapseHost === '127.0.0.1' ? '✓ سرور محلی (Local)' : 'تنظیم به عنوان سرور محلی'}
+                            {synapseHost === 'localhost' || synapseHost === '127.0.0.1' ? '✓ Local Server' : 'Set as Local Server'}
                           </button>
                         </div>
 
@@ -985,7 +981,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                         </div>
 
                         <div className="mt-2.5 pt-2 border-t border-slate-200/40 dark:border-white/5 flex items-center justify-between text-[10px] text-slate-500">
-                          <span>💡 در صورتی که گره Synapse همان سرور جاری پنل باشد، دستورات به صورت خودکار محلی اجرا شده و نیازی به رمز عبور SSH نیست.</span>
+                          <span>💡 When Synapse is hosted locally on this server, commands execute directly without requiring SSH passwords.</span>
                         </div>
                       </div>
 

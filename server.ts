@@ -27823,6 +27823,7 @@ systemctl enable --now postgresql
 
 # Configure user and database
 sudo -u postgres psql -c "CREATE ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}';" 2>/dev/null || sudo -u postgres psql -c "ALTER ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}';"
+sudo -u postgres psql -c "ALTER ROLE ${dbUser} CREATEDB;" 2>/dev/null || true
 sudo -u postgres psql -c "CREATE DATABASE ${dbName} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
 sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON SCHEMA public TO ${dbUser};" 2>/dev/null || true
@@ -27845,22 +27846,29 @@ if [ -f "$PG_CONF" ]; then
 fi
 
 if [ -f "$PG_HBA" ]; then
-  echo "host    ${dbName}    ${dbUser}    0.0.0.0/0    scram-sha-256" >> "$PG_HBA"
-  echo "host    ${dbName}    ${dbUser}    0.0.0.0/0    md5" >> "$PG_HBA"
-  echo "host    ${dbName}    ${dbUser}    ::/0         scram-sha-256" >> "$PG_HBA"
-  echo "host    ${dbName}    ${dbUser}    ::/0         md5" >> "$PG_HBA"
-  echo "host    all          ${dbUser}    0.0.0.0/0    scram-sha-256" >> "$PG_HBA"
-  echo "host    all          ${dbUser}    0.0.0.0/0    md5" >> "$PG_HBA"
-  if [[ "${synHost}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
-    echo "host    ${dbName}    ${dbUser}    ${synHost}/32    scram-sha-256" >> "$PG_HBA"
-    echo "host    ${dbName}    ${dbUser}    ${synHost}/32    md5" >> "$PG_HBA"
-  fi
-  echo "host    ${dbName}    ${dbUser}    127.0.0.1/32    trust" >> "$PG_HBA"
+  TMP_HBA=$(mktemp)
+  cat << 'EOFPGHBA' > "$TMP_HBA"
+# Matrix Enterprise Stack Database Whitelist
+host    ${dbName}    ${dbUser}    0.0.0.0/0    md5
+host    ${dbName}    ${dbUser}    0.0.0.0/0    scram-sha-256
+host    ${dbName}    ${dbUser}    ::/0         md5
+host    ${dbName}    ${dbUser}    ::/0         scram-sha-256
+host    all          ${dbUser}    0.0.0.0/0    md5
+host    all          ${dbUser}    0.0.0.0/0    scram-sha-256
+host    ${dbName}    ${dbUser}    127.0.0.1/32 trust
+EOFPGHBA
+  cat "$PG_HBA" >> "$TMP_HBA" 2>/dev/null || true
+  cp -f "$TMP_HBA" "$PG_HBA" 2>/dev/null || true
+  rm -f "$TMP_HBA"
 fi
 
 # Firewall permissions for PostgreSQL port 5432
 command -v ufw >/dev/null 2>&1 && ufw allow 5432/tcp || true
 command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 5432 -j ACCEPT 2>/dev/null || true
+
+# Restart PostgreSQL now so remote queries in Stage 2 connect immediately
+systemctl restart postgresql
+PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELECT 1;' 2>/dev/null && echo "PG_LOCAL_AUTH_OK" || echo "PG_AUTH_NOTE"
 echo "DB_BASE_PROVISION_COMPLETE"
 `;
 
@@ -27868,7 +27876,7 @@ echo "DB_BASE_PROVISION_COMPLETE"
                   const synBaseScript = `
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y lsb-release curl wget gnupg apt-transport-https python3-pip python3-psycopg2 nginx python3-yaml openssl
+apt-get install -y debconf-utils lsb-release curl wget gnupg apt-transport-https python3 python3-pip python3-yaml python3-psycopg2 nginx openssl
 
 # Strict Service Isolation: Ensure PostgreSQL does NOT run on dedicated Synapse Server
 ${isSynapseIsolatedFromDb ? `
@@ -27876,11 +27884,15 @@ systemctl stop postgresql 2>/dev/null || true
 systemctl disable postgresql 2>/dev/null || true
 ` : ''}
 ${isSynapseIsolatedFromElement ? `
-rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
+rm -f /etc/nginx/sites-enabled/element* /etc/nginx/sites-available/element* 2>/dev/null || true
 ` : ''}
 
 # Remove default Ubuntu Nginx welcome site so homeserver proxy responds exclusively
 rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default 2>/dev/null || true
+
+# Preseed debconf for non-interactive installation
+echo "matrix-synapse matrix-synapse/server-name string ${config.HS_DOMAIN}" | debconf-set-selections 2>/dev/null || true
+echo "matrix-synapse matrix-synapse/report-stats boolean false" | debconf-set-selections 2>/dev/null || true
 
 # Add Matrix.org official repo
 if [ ! -f /etc/apt/sources.list.d/matrix-org.list ]; then
@@ -27890,14 +27902,33 @@ if [ ! -f /etc/apt/sources.list.d/matrix-org.list ]; then
   apt-get update -y || true
 fi
 
-apt-get install -y matrix-synapse-py3 || apt-get install -y matrix-synapse || true
+apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" matrix-synapse-py3 || apt-get install -y matrix-synapse || true
 
-# Generate default config if absent
+# Ensure psycopg2 and pyyaml are installed in Synapse virtualenv to prevent 502 startup failure
+if [ -d /opt/venvs/matrix-synapse ]; then
+  /opt/venvs/matrix-synapse/bin/pip install --upgrade psycopg2-binary pyyaml 2>/dev/null || true
+fi
+pip3 install --upgrade psycopg2-binary pyyaml 2>/dev/null || true
+
+# Remove SQLite database overrides that conflict with PostgreSQL
+rm -f /etc/matrix-synapse/conf.d/database.yaml /etc/matrix-synapse/conf.d/*sqlite* 2>/dev/null || true
+
+# Generate default config & keys if absent
 CONF_DIR="/etc/matrix-synapse"
 CONF_FILE="$CONF_DIR/homeserver.yaml"
-mkdir -p "$CONF_DIR"
+mkdir -p "$CONF_DIR" /var/lib/matrix-synapse /var/log/matrix-synapse
+SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
+if [ ! -f "$SYN_PYTHON" ]; then
+  SYN_PYTHON="$(which python3)"
+fi
+
 if [ ! -f "$CONF_FILE" ]; then
-  python3 -m synapse.app.homeserver --server-name "${config.HS_DOMAIN}" --config-path "$CONF_FILE" --generate-config --report-stats=no 2>/dev/null || true
+  $SYN_PYTHON -m synapse.app.homeserver --server-name "${config.HS_DOMAIN}" --config-path "$CONF_FILE" --generate-config --report-stats=no 2>/dev/null || true
+fi
+
+SIGNING_KEY="$CONF_DIR/${config.HS_DOMAIN}.signing.key"
+if [ ! -f "$SIGNING_KEY" ]; then
+  $SYN_PYTHON -m synapse.app.homeserver --server-name "${config.HS_DOMAIN}" --config-path "$CONF_FILE" --generate-keys 2>/dev/null || true
 fi
 
 # Generate SSL certificate for Synapse reverse proxy (Self-Signed fallback)
@@ -27908,7 +27939,7 @@ if [ ! -f /etc/ssl/matrix/synapse.crt ]; then
     -subj "/CN=${config.HS_DOMAIN}" 2>/dev/null || true
 fi
 
-# Configure Nginx reverse proxy on Synapse node with default_server and root reverse proxy
+# Configure Nginx reverse proxy on Synapse node
 cat << 'EOFNGINX' > /etc/nginx/sites-available/matrix-synapse.conf
 server {
     listen 80 default_server;
@@ -27926,6 +27957,9 @@ server {
         proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Host \$host;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
         client_max_body_size 50M;
         add_header 'Access-Control-Allow-Origin' '*' always;
         add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
@@ -27958,6 +27992,9 @@ server {
         proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Host \$host;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
         client_max_body_size 50M;
         add_header 'Access-Control-Allow-Origin' '*' always;
         add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
@@ -27967,7 +28004,14 @@ server {
 EOFNGINX
 
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-ln -sf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
+ln -sf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix-synapse.conf 2>/dev/null || true
+
+# Set correct file ownership for matrix-synapse service user
+chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || \
+chown -R matrix-synapse:nogroup /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || true
+chmod -R 755 /etc/matrix-synapse /var/lib/matrix-synapse 2>/dev/null || true
+[ -f "$CONF_FILE" ] && chmod 644 "$CONF_FILE" 2>/dev/null || true
+
 # Firewall permissions
 command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8008/tcp && ufw allow 8448/tcp || true
 echo "SYNAPSE_BASE_PROVISION_COMPLETE"
@@ -27989,8 +28033,9 @@ systemctl stop postgresql 2>/dev/null || true
 systemctl disable postgresql 2>/dev/null || true
 ` : ''}
 
-# Remove default Ubuntu Nginx site so Element client serves cleanly
-rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default 2>/dev/null || true
+# PURGE all conflicting sites on Element node to completely eliminate 502 Bad Gateway
+rm -f /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null || true
+rm -f /etc/nginx/sites-available/default 2>/dev/null || true
 
 mkdir -p /var/www/element
 cd /tmp
@@ -28084,55 +28129,86 @@ except Exception as e:
     print('>>> [WARNING] TCP connection to PostgreSQL at ${dbNode.host || '127.0.0.1'}:${dbPort} note:', e)
 " 2>/dev/null || true
 
-# Inject verified PostgreSQL credentials into homeserver.yaml
+# Clean up any conflicting sqlite overrides
+rm -f /etc/matrix-synapse/conf.d/database.yaml /etc/matrix-synapse/conf.d/*sqlite* 2>/dev/null || true
+
+# Inject verified PostgreSQL credentials and network listener into homeserver.yaml
 CONF_FILE="/etc/matrix-synapse/homeserver.yaml"
-python3 -c "
-import yaml, os
-conf_path = '$CONF_FILE'
-if os.path.exists(conf_path):
-    with open(conf_path, 'r') as f:
-        data = yaml.safe_load(f) or {}
-    data['server_name'] = '${config.HS_DOMAIN}'
-    data['public_baseurl'] = 'https://${config.HS_DOMAIN}/'
-    data['database'] = {
-        'name': 'psycopg2',
-        'args': {
-            'user': '${dbUser}',
-            'password': '${dbPass}',
-            'database': '${dbName}',
-            'host': '${dbNode.host || '127.0.0.1'}',
-            'port': int(${dbPort}),
-            'cp_min': 5,
-            'cp_max': 20
-        }
+cat << 'EOFPYWIRING' > /tmp/wire_synapse.py
+import yaml, os, sys
+
+conf_path = '/etc/matrix-synapse/homeserver.yaml'
+if not os.path.exists(conf_path):
+    print("Warning: homeserver.yaml not found at", conf_path)
+    sys.exit(0)
+
+with open(conf_path, 'r') as f:
+    data = yaml.safe_load(f) or {}
+
+data['server_name'] = '${config.HS_DOMAIN}'
+data['public_baseurl'] = 'https://${config.HS_DOMAIN}/'
+
+# Configure PostgreSQL database connection
+data['database'] = {
+    'name': 'psycopg2',
+    'args': {
+        'user': '${dbUser}',
+        'password': '${dbPass}',
+        'database': '${dbName}',
+        'host': '${dbNode.host || '127.0.0.1'}',
+        'port': int(${dbPort}),
+        'cp_min': 5,
+        'cp_max': 20
     }
-    data['enable_registration'] = True
-    data['enable_registration_without_verification'] = True
-    data['suppress_key_server_warning'] = True
-    data['rc_messages_per_second'] = 50
-    data['rc_message_burst_count'] = 100
+}
 
-    listeners = data.get('listeners', [])
-    has_http = False
-    for l in listeners:
-        if l.get('port') == 8008:
-            has_http = True
-            l['x_forwarded'] = True
-            l['bind_addresses'] = ['0.0.0.0']
-    if not has_http:
-        listeners.append({
-            'port': 8008,
-            'tls': False,
-            'type': 'http',
-            'x_forwarded': True,
-            'bind_addresses': ['0.0.0.0'],
-            'resources': [{'names': ['client', 'federation'], 'compress': False}]
-        })
-    data['listeners'] = listeners
+# Registration & Security
+data['enable_registration'] = True
+data['enable_registration_without_verification'] = True
+data['suppress_key_server_warning'] = True
+data['rc_messages_per_second'] = 50
+data['rc_message_burst_count'] = 100
 
-    with open(conf_path, 'w') as f:
-        yaml.dump(data, f, default_flow_style=False)
-" 2>/dev/null || true
+# Listeners - Ensure 8008 is bound properly and has client/federation resources
+listeners = data.get('listeners', [])
+found_http = False
+for l in listeners:
+    if l.get('port') == 8008:
+        found_http = True
+        l['x_forwarded'] = True
+        l['bind_addresses'] = ['0.0.0.0', '127.0.0.1', '::']
+        l['resources'] = [{'names': ['client', 'federation'], 'compress': False}]
+        break
+
+if not found_http:
+    listeners.append({
+        'port': 8008,
+        'tls': False,
+        'type': 'http',
+        'x_forwarded': True,
+        'bind_addresses': ['0.0.0.0', '127.0.0.1', '::'],
+        'resources': [{'names': ['client', 'federation'], 'compress': False}]
+    })
+
+data['listeners'] = listeners
+
+with open(conf_path, 'w') as f:
+    yaml.dump(data, f, default_flow_style=False)
+print(">>> [OK] homeserver.yaml updated with PostgreSQL configuration.")
+EOFPYWIRING
+
+# Execute configuration update with available python runtime
+if [ -f /opt/venvs/matrix-synapse/bin/python ]; then
+  /opt/venvs/matrix-synapse/bin/python /tmp/wire_synapse.py 2>/dev/null || python3 /tmp/wire_synapse.py
+else
+  python3 /tmp/wire_synapse.py
+fi
+rm -f /tmp/wire_synapse.py
+
+# Re-apply strict permissions for matrix-synapse user
+chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synapse 2>/dev/null || \
+chown -R matrix-synapse:nogroup /etc/matrix-synapse /var/lib/matrix-synapse 2>/dev/null || true
+chmod 644 "$CONF_FILE" 2>/dev/null || true
 echo "SYNAPSE_WIRING_COMPLETE"
 `;
 
@@ -28181,7 +28257,10 @@ cat << 'EOFELEM' > /var/www/element/config.json
 }
 EOFELEM
 
-# Configure Nginx for Element Web with reverse-proxy fallback for Matrix API and default_server
+# Purge any old sites in sites-enabled to prevent 502 proxying
+rm -f /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null || true
+
+# Configure Nginx for Element Web
 cat << 'EOFELNGINX' > /etc/nginx/sites-available/element-web.conf
 server {
     listen 80 default_server;
@@ -28196,9 +28275,17 @@ server {
     root /var/www/element;
     index index.html index.htm;
 
+    # Serve static Element Web application directly
     location / {
         try_files \$uri \$uri/ /index.html =404;
         add_header Cache-Control "no-cache";
+    }
+
+    # Ensure config.json is never cached by browsers
+    location = /config.json {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
     }
 
     location /.well-known/matrix/client {
@@ -28206,20 +28293,10 @@ server {
         default_type application/json;
         add_header 'Access-Control-Allow-Origin' '*' always;
     }
-
-    location ~ ^(/_matrix|/_synapse/client) {
-        proxy_pass http://${synHost}:8008;
-        proxy_set_header Host ${config.HS_DOMAIN};
-        proxy_set_header X-Forwarded-For \$remote_addr;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        client_max_body_size 50M;
-        add_header 'Access-Control-Allow-Origin' '*' always;
-    }
 }
 EOFELNGINX
 
-rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-ln -sf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
+ln -sf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
 
 # Strict permission audit on Element web directory to avoid 403 Forbidden
 chown -R www-data:www-data /var/www/element 2>/dev/null || true
@@ -28254,12 +28331,34 @@ PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELEC
                   // Step 3.2: Restart Matrix Synapse & Nginx on Synapse Node Second
                   logOut('   ▶ Step 2/3: Restarting Matrix Synapse & Nginx on Homeserver...');
                   const synRestartScript = `
-rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/element* 2>/dev/null || true
+ln -sf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix-synapse.conf 2>/dev/null || true
+
+chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || \
+chown -R matrix-synapse:nogroup /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || true
+chmod 644 /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
+
+systemctl daemon-reload
 systemctl enable --now matrix-synapse
 systemctl restart matrix-synapse
+
 nginx -t 2>/dev/null && systemctl restart nginx || true
-sleep 4
-curl -sSf http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1 && echo "SYNAPSE_API_HEALTHY" || echo "SYNAPSE_RESTARTED"
+
+# Wait up to 20 seconds for Synapse port 8008 to become ready
+SYN_READY=0
+for i in $(seq 1 20); do
+  if curl -sSf http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1; then
+    SYN_READY=1
+    echo "SYNAPSE_API_HEALTHY"
+    break
+  fi
+  sleep 1
+done
+
+if [ "$SYN_READY" -eq 0 ]; then
+  echo ">>> [NOTICE] Synapse startup in progress or details:"
+  systemctl status matrix-synapse --no-pager 2>&1 | head -n 20 || true
+fi
 `;
                   await runNodeTask(isSynRemote, synConnProfile, synRestartScript, 'Synapse Node', synHost);
                   logOut('   ✅ Step 2/3 Complete: Matrix Synapse Homeserver & Reverse Proxy are active.');
@@ -28267,10 +28366,14 @@ curl -sSf http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1 && echo 
                   // Step 3.3: Restart Nginx on Element Web Node Third
                   logOut('   ▶ Step 3/3: Restarting Nginx Webserver on Element Web Client Node...');
                   const elemRestartScript = `
-rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+# Ensure ONLY element-web.conf is active
+find /etc/nginx/sites-enabled/ -type l ! -name "element-web.conf" -delete 2>/dev/null || true
+ln -sf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
+
 chown -R www-data:www-data /var/www/element 2>/dev/null || true
 chmod -R 755 /var/www/element 2>/dev/null || true
 chmod 755 /var /var/www 2>/dev/null || true
+
 nginx -t 2>/dev/null && systemctl restart nginx || true
 curl -sSf -k https://127.0.0.1/ >/dev/null 2>&1 || curl -sSf http://127.0.0.1/ >/dev/null 2>&1 || true
 echo "ELEMENT_WEB_RUNNING"
