@@ -15,9 +15,17 @@
 
 ---
 
-## Current Panel Version: **v2.52.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.53.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.53.0** - 2026-09-03
+- **SSH Connection Pool Lifecycle Hardening & Bounded Health Check Verification**:
+  - **SSH Socket Lifecycle Management**: Implemented robust `safelyCloseSSHClient` with listener removal, `end()` signaling, and `destroy()` socket finalization to eliminate lingering SSH zombie sockets and prevent connection exhaustion on remote hosts.
+  - **Background Polling Pausing**: Automatically suspends dashboard system metrics and background SSH polling during active deployment operations to avoid reaching `MaxSessions` or `MaxStartups` limits on remote OpenSSH nodes.
+  - **Bounded Exponential Backoff Probes**: Replaced open-ended nested remote wait loops with a bounded 10-probe health check featuring exponential backoff (2s to 8s) and a hard 60s timeout, guaranteeing the orchestrator never hangs indefinitely.
+  - **Idle Connection Reaper**: Shortened SSH pool reaper interval to 15s with a 30s idle eviction policy, ensuring unused connections are cleaned up immediately.
+  - **Real-Time SSH Connection Auditing**: Added live SSH connection telemetry to deployment logs displaying active vs pooled session counts at each deployment stage.
 
 #### **v2.52.0** - 2026-09-03
 - **Idempotent Database Provisioning & Zero-Downtime PostgreSQL Service Reload**:

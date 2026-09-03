@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.52.0";
+export const PANEL_VERSION = "2.53.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,18 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.53.0",
+    date: "2026-09-03",
+    title: "SSH Connection Pool Lifecycle Hardening & Bounded Health Check Verification",
+    changes: [
+      "SSH Socket Lifecycle Management: Implemented robust safelyCloseSSHClient with listener removal, end() signaling, and destroy() socket finalization to eliminate lingering SSH zombie sockets and prevent connection exhaustion.",
+      "Background Polling Pausing: Automatically suspends dashboard system metrics and background SSH polling during deployment operations to avoid reaching MaxSessions or MaxStartups limits on remote nodes.",
+      "Bounded Exponential Backoff Probes: Replaced open-ended nested remote wait loops with a bounded 10-probe health check featuring exponential backoff (2s to 8s) and a hard 60s timeout, guaranteeing the orchestrator never hangs indefinitely.",
+      "Idle Connection Reaper: Shortened SSH pool reaper interval to 15s with a 30s idle eviction policy, ensuring unused connections are cleaned up immediately.",
+      "Real-Time SSH Connection Auditing: Added live SSH connection telemetry to deployment logs displaying active vs pooled session counts at each deployment stage."
+    ]
+  },
   {
     version: "2.52.0",
     date: "2026-09-03",
