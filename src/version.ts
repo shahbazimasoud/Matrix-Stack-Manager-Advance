@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.55.3";
+export const PANEL_VERSION = "2.55.4";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,18 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.55.4",
+    date: "2026-09-03",
+    title: "Fix Process Self-Kill in Synapse Restart & pg_hba.py Line Joining",
+    changes: [
+      "Eliminated self-killing process bug in Synapse restart script where pkill -9 -f matched the running bash command line and terminated the deployment before Synapse could start.",
+      "Replaced pkill with safe port-specific socket cleanup via lsof and fuser on TCP port 8008.",
+      "Fixed Python SyntaxError in /tmp/wire_pg_hba.py by using chr(10).join(lines) instead of literal newline interpolation in template strings.",
+      "Cleaned up redundant --check-keys parameter and added instant systemctl status reporting if Synapse service activation fails."
+    ]
+  },
+
   {
     version: "2.55.3",
     date: "2026-09-03",

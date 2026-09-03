@@ -27990,7 +27990,7 @@ lines.extend([
     ""
 ])
 
-new_block = "\n".join(lines)
+new_block = chr(10).join(lines)
 final_content = new_block + content.lstrip()
 
 with open(hba_file, "w", encoding="utf-8") as f:
@@ -28600,41 +28600,49 @@ PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELEC
 rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/element* 2>/dev/null || true
 ln -sf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix-synapse.conf 2>/dev/null || true
 
-# Stop matrix-synapse and cleanly free port 8008 before restarting
+# Safely stop matrix-synapse and cleanly free port 8008 before restarting
 systemctl stop matrix-synapse 2>/dev/null || true
-pkill -9 -f "synapse.app.homeserver" 2>/dev/null || true
 if command -v fuser >/dev/null 2>&1; then
   fuser -k -9 8008/tcp 2>/dev/null || true
 fi
-PID_8008=$(ss -tulpn '( sport = :8008 )' 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | tr '\n' ' ')
-[ -n "$PID_8008" ] && kill -9 $PID_8008 2>/dev/null || true
+if command -v lsof >/dev/null 2>&1; then
+  PIDS_8008=$(lsof -t -i:8008 2>/dev/null || true)
+  for p in $PIDS_8008; do
+    [ -n "$p" ] && kill -9 "$p" 2>/dev/null || true
+  done
+fi
 sleep 1
 
 # Ensure directory permissions and log files for matrix-synapse user
 mkdir -p /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse /var/lib/matrix-synapse/media
 touch /var/log/matrix-synapse/homeserver.log
-chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || \
+chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || \\
 chown -R matrix-synapse:nogroup /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || true
 chmod 755 /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || true
 chmod 644 /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
-chmod 644 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
+chmod 664 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
+
 if [ -f "/etc/matrix-synapse/${config.HS_DOMAIN}.signing.key" ]; then
   chmod 640 "/etc/matrix-synapse/${config.HS_DOMAIN}.signing.key" 2>/dev/null || true
 fi
-
-SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
-[ ! -f "$SYN_PYTHON" ] && SYN_PYTHON="$(which python3)"
-
-# Check keys
-sudo -u matrix-synapse "$SYN_PYTHON" -m synapse.app.homeserver \
-  --config-path=/etc/matrix-synapse/homeserver.yaml \
-  --check-keys 2>&1 || true
+if [ -f "/etc/matrix-synapse/homeserver.signing.key" ]; then
+  chmod 640 "/etc/matrix-synapse/homeserver.signing.key" 2>/dev/null || true
+fi
 
 # Reset systemd failure rate-limiting and start cleanly
 systemctl daemon-reload
 systemctl reset-failed matrix-synapse 2>/dev/null || true
 systemctl enable matrix-synapse 2>/dev/null || true
-systemctl start matrix-synapse 2>&1 || true
+systemctl restart matrix-synapse 2>&1 || systemctl start matrix-synapse 2>&1 || true
+sleep 2
+
+# Verify whether systemd has started the service
+if systemctl is-active --quiet matrix-synapse; then
+  echo "SYNAPSE_SERVICE_STARTED_ACTIVE"
+else
+  echo "SYNAPSE_SERVICE_START_ATTEMPTED_CHECKING"
+  systemctl status matrix-synapse --no-pager -n 5 2>&1 || true
+fi
 
 nginx -t 2>/dev/null && systemctl restart nginx || true
 echo "SYNAPSE_SERVICE_START_DISPATCHED"

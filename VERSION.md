@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.55.3** (Released: 2026-09-03)
+## Current Panel Version: **v2.55.4** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.55.4** - 2026-09-03
+- **Fix Process Self-Kill in Synapse Restart & pg_hba.py Line Joining**:
+  - **Resolved Premature Process Termination**: Eliminated `pkill -9 -f "synapse.app.homeserver"` which matched the executing bash shell process commandline itself, causing immediate script SIGKILL before `systemctl start matrix-synapse` could ever be invoked.
+  - **Socket-Targeted Freeing**: Replaced blunt pkill with `fuser -k -9 8008/tcp` and targeted `lsof -t -i:8008` cleanup to isolate only zombie processes bound to port 8008.
+  - **Python Template Literal Line Joining**: Replaced `new_block = "\n".join(lines)` with `new_block = chr(10).join(lines)` in `/tmp/wire_pg_hba.py` to prevent JS template literal escape corruption leading to SyntaxError on line 80.
+  - **Direct Systemctl Verification & Fallback Logging**: Added `systemctl is-active matrix-synapse` verification with instant journal/status output if activation encounters issues.
 
 #### **v2.55.3** - 2026-09-03
 - **Fix Health Probe Evaluation & Database Whitelist Unterminated String**:
