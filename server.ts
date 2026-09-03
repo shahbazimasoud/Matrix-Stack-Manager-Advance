@@ -27909,10 +27909,9 @@ if [ -f "$PG_CONF" ]; then
 fi
 
 if [ -f "$PG_HBA" ]; then
-  cp -a "$PG_HBA" "\.bak.88467429" 2>/dev/null || true
-
-  python3 -c "
-import ipaddress, socket, re, sys
+  cp -a "$PG_HBA" "$PG_HBA.bak" 2>/dev/null || true
+  cat << 'EOFPGHBA' > /tmp/wire_pg_hba.py
+import ipaddress, socket, sys
 
 hba_file = sys.argv[1]
 syn_host = sys.argv[2].strip()
@@ -27920,40 +27919,48 @@ db_user = sys.argv[3].strip()
 db_name = sys.argv[4].strip()
 
 try:
-    with open(hba_file, 'r', encoding='utf-8', errors='ignore') as f:
+    with open(hba_file, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
 except Exception:
-    content = ''
+    content = ""
 
 # Strip any previous Matrix Enterprise Stack Database Whitelist block to prevent duplicates
-content = re.sub(r'# Matrix Enterprise Stack Database Whitelist.*?# End Matrix Enterprise Stack Database Whitelist
-?', '', content, flags=re.DOTALL)
+start_marker = "# Matrix Enterprise Stack Database Whitelist"
+end_marker = "# End Matrix Enterprise Stack Database Whitelist"
+while start_marker in content and end_marker in content:
+    p1 = content.find(start_marker)
+    p2 = content.find(end_marker, p1)
+    if p2 == -1:
+        break
+    p2 += len(end_marker)
+    while p2 < len(content) and content[p2] in "\r\n":
+        p2 += 1
+    content = content[:p1] + content[p2:]
 
-entries = ['127.0.0.1/32', '::1/128']
-
+entries = ["127.0.0.1/32", "::1/128"]
 try:
-    if '/' in syn_host:
+    if "/" in syn_host:
         net = ipaddress.ip_network(syn_host, strict=False)
         entries.append(str(net))
     else:
         ip = ipaddress.ip_address(syn_host)
         if ip.version == 4:
-            entries.append(f'{ip}/32')
+            entries.append(f"{ip}/32")
             if ip.is_private:
-                subnet = ipaddress.ip_network(f'{ip}/24', strict=False)
+                subnet = ipaddress.ip_network(f"{ip}/24", strict=False)
                 entries.append(str(subnet))
         else:
-            entries.append(f'{ip}/128')
+            entries.append(f"{ip}/128")
 except ValueError:
-    if syn_host and syn_host != 'localhost':
+    if syn_host and syn_host != "localhost":
         entries.append(syn_host)
         try:
             for res in socket.getaddrinfo(syn_host, None):
                 ip_str = res[4][0]
-                if ':' in ip_str:
-                    entries.append(f'{ip_str}/128')
+                if ":" in ip_str:
+                    entries.append(f"{ip_str}/128")
                 else:
-                    entries.append(f'{ip_str}/32')
+                    entries.append(f"{ip_str}/32")
         except Exception:
             pass
 
@@ -27961,34 +27968,37 @@ seen = set()
 unique_entries = [x for x in entries if not (x in seen or seen.add(x))]
 
 lines = [
-    '# Matrix Enterprise Stack Database Whitelist',
-    '# Localhost and cluster trusted access'
+    "# Matrix Enterprise Stack Database Whitelist",
+    "# Localhost and cluster trusted access"
 ]
+
 for e in unique_entries:
-    lines.append(f'host    all          all          {e:26} trust')
-    lines.append(f'host    {db_name}    {db_user}    {e:26} trust')
+    lines.append(f"host    all          all          {e:26} trust")
+    lines.append(f"host    {db_name}    {db_user}    {e:26} trust")
 
 lines.extend([
-    '# Remote cluster access for synapse user with password authentication',
-    f'host    {db_name}    {db_user}    0.0.0.0/0                 md5',
-    f'host    {db_name}    {db_user}    0.0.0.0/0                 scram-sha-256',
-    f'host    {db_name}    {db_user}    ::/0                      md5',
-    f'host    {db_name}    {db_user}    ::/0                      scram-sha-256',
-    f'host    all          {db_user}    0.0.0.0/0                 md5',
-    f'host    all          {db_user}    0.0.0.0/0                 scram-sha-256',
-    f'host    all          {db_user}    ::/0                      md5',
-    f'host    all          {db_user}    ::/0                      scram-sha-256',
-    '# End Matrix Enterprise Stack Database Whitelist',
-    ''
+    "# Remote cluster access for synapse user with password authentication",
+    f"host    {db_name}    {db_user}    0.0.0.0/0                 md5",
+    f"host    {db_name}    {db_user}    0.0.0.0/0                 scram-sha-256",
+    f"host    {db_name}    {db_user}    ::/0                      md5",
+    f"host    {db_name}    {db_user}    ::/0                      scram-sha-256",
+    f"host    all          {db_user}    0.0.0.0/0                 md5",
+    f"host    all          {db_user}    0.0.0.0/0                 scram-sha-256",
+    f"host    all          {db_user}    ::/0                      md5",
+    f"host    all          {db_user}    ::/0                      scram-sha-256",
+    "# End Matrix Enterprise Stack Database Whitelist",
+    ""
 ])
 
-new_block = '\n'.join(lines)
+new_block = "\n".join(lines)
 final_content = new_block + content.lstrip()
 
-with open(hba_file, 'w', encoding='utf-8') as f:
+with open(hba_file, "w", encoding="utf-8") as f:
     f.write(final_content)
-" "$PG_HBA" "${synHost}" "${dbUser}" "${dbName}" 2>&1 || true
-
+print(">>> [OK] pg_hba.conf whitelist updated successfully.")
+EOFPGHBA
+  python3 /tmp/wire_pg_hba.py "$PG_HBA" "${synHost}" "${dbUser}" "${dbName}" 2>&1 || true
+  rm -f /tmp/wire_pg_hba.py
   # Ensure postgres user owns and can read pg_hba.conf (mode 640)
   chown postgres:postgres "$PG_HBA" 2>/dev/null || true
   chmod 640 "$PG_HBA" 2>/dev/null || true

@@ -15,9 +15,15 @@
 
 ---
 
-## Current Panel Version: **v2.55.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.55.1** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.55.1** - 2026-09-03
+- **PostgreSQL `pg_hba.conf` Remote Whitelisting Syntax Fix**:
+  - **Fixed Python SyntaxError in `pg_hba.conf` script**: Eliminated the `SyntaxError: unterminated string literal (detected at line 16)` caused by unescaped multiline regex splitting inside the bash execution block.
+  - **Bulletproof Here-Doc Script Generation**: Moved inline Python execution to an isolated temporary script (`/tmp/wire_pg_hba.py`) using bash `EOFPGHBA` heredoc and clean string slice delimiter matching instead of brittle regex parsing.
+  - **Seamless Multi-Node Database Provisioning**: Restores seamless, error-free PostgreSQL remote access whitelisting for Synapse nodes with trusted subnets, scram-sha-256, and md5 authentication.
 
 #### **v2.55.0** - 2026-09-03
 - **High-Speed Non-Blocking NPM Installation & Setup Pipeline Streamlining**:

@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.55.0";
+export const PANEL_VERSION = "2.55.1";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,16 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.55.1",
+    date: "2026-09-03",
+    title: "PostgreSQL pg_hba.conf Python Whitelist Syntax Fix",
+    changes: [
+      "Fixed Python SyntaxError in pg_hba.conf configuration: Replaced unescaped regex substitution with a deterministic, safe delimiter slice algorithm written via here-doc script (/tmp/wire_pg_hba.py).",
+      "Eliminated unterminated string literal error that broke execution during Database Node provisioning on multi-node stack deployments.",
+      "Ensures robust IPv4, IPv6, private subnet CIDRs, and cluster authentication entries are safely appended to pg_hba.conf without syntax collisions."
+    ]
+  },
   {
     version: "2.55.0",
     date: "2026-09-03",
