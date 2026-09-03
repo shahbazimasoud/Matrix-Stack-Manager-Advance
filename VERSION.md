@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.44.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.45.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.45.0** - 2026-09-03
+- **Dynamic Multi-Server Connection Status Cards & Compact Action Bar**:
+  - **Dynamic Multi-Server Profile Banner**: Redesigned the Connected Server Profile header to dynamically display the connection name and individual status cards corresponding to each configured server (1, 2, or 3 servers).
+  - **Per-Server Status & Diagnostics**: Each configured node card displays live WebSocket connectivity (Online, Checking, Disconnected), SSH endpoint host/port, service ports (8008, 5432, 80/443), and an independent 1-click test button.
+  - **WebSocket Connection Flapping Elimination**: Unified telemetry and node diagnostics over a resilient WebSocket connection with 15s keepalive ping/pong heartbeat, removing race conditions and socket thrashing.
+  - **Compact Server Connection Buttons**: Resized the top action buttons in Connection Manager (Export, Import, Add Server/Cluster) to a compact, inline flex-row layout.
 
 #### **v2.44.0** - 2026-09-03
 - **Multi-Server Distributed WebSocket Channels & Real-Time Node Diagnostics**:

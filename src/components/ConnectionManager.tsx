@@ -1317,7 +1317,7 @@ export default function ConnectionManager({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 self-start md:self-auto">
+        <div className="flex flex-row flex-wrap items-center gap-2 self-start md:self-auto">
           <input
             type="file"
             ref={fileInputRef}
@@ -1330,9 +1330,9 @@ export default function ConnectionManager({
             type="button"
             onClick={handleExportProfiles}
             title={t.exportConnections}
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-200 hover:text-white border border-white/10 font-bold text-xs transition-all duration-300"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 hover:text-white border border-white/10 font-medium text-xs transition-all duration-200 shrink-0 whitespace-nowrap"
           >
-            <Download className="w-4 h-4 text-teal-400" />
+            <Download className="w-3.5 h-3.5 text-teal-400" />
             <span>{t.exportConnections}</span>
           </button>
 
@@ -1340,9 +1340,9 @@ export default function ConnectionManager({
             type="button"
             onClick={handleImportClick}
             title={t.importConnections}
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-200 hover:text-white border border-white/10 font-bold text-xs transition-all duration-300"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 hover:text-white border border-white/10 font-medium text-xs transition-all duration-200 shrink-0 whitespace-nowrap"
           >
-            <Upload className="w-4 h-4 text-teal-400" />
+            <Upload className="w-3.5 h-3.5 text-teal-400" />
             <span>{t.importConnections}</span>
           </button>
 
@@ -1356,10 +1356,10 @@ export default function ConnectionManager({
                 setShowForm(true);
               }
             }}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-teal-500 hover:bg-teal-600 text-white font-bold text-sm transition-all duration-300 hover:shadow-[0_0_20px_rgba(20,184,166,0.3)] hover:scale-[1.02]"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-600 text-white font-semibold text-xs transition-all duration-200 hover:shadow-[0_0_15px_rgba(20,184,166,0.3)] shrink-0 whitespace-nowrap"
           >
-            <Plus className="w-4 h-4" />
-            {showForm ? t.viewProfiles : t.addRemoteServer}
+            <Plus className="w-3.5 h-3.5" />
+            <span>{showForm ? t.viewProfiles : t.addRemoteServer}</span>
           </button>
         </div>
       </div>

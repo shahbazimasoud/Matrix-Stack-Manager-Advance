@@ -27523,6 +27523,14 @@ async function startServer() {
         const payload = JSON.parse(msg.toString());
         const curConn = getActiveConnection();
 
+        if (payload.type === 'ping') {
+          ws.isAlive = true;
+          if (ws.readyState === WebSocket.OPEN) {
+            try { ws.send(JSON.stringify({ type: 'pong' })); } catch (_) {}
+          }
+          return;
+        }
+
         if (payload.type === 'request_metrics') {
           const stats = await getFullSystemStats();
           if (ws.readyState === WebSocket.OPEN) {
@@ -27540,16 +27548,19 @@ async function startServer() {
           const res = await checkSynapseNodeApi(curConn);
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'api_check_result', role: 'synapse', ...res }));
+            ws.send(JSON.stringify({ type: 'synapse_api_status', role: 'synapse', ...res }));
           }
         } else if (payload.type === 'check_database') {
           const res = await checkDatabaseNodeHealth(curConn);
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'db_check_result', role: 'database', ...res }));
+            ws.send(JSON.stringify({ type: 'database_status', role: 'database', ...res }));
           }
         } else if (payload.type === 'check_element') {
           const res = await checkElementNodeWeb(curConn);
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'element_check_result', role: 'element', ...res }));
+            ws.send(JSON.stringify({ type: 'element_status', role: 'element', ...res }));
           }
         } else if (payload.type === 'check_synapse_settings') {
           try {
@@ -28305,48 +28316,11 @@ echo "ELEMENT_WEB_RUNNING"
   setInterval(async () => {
     if (wss.clients.size > 0) {
       try {
-        const activeConn = getActiveConnection();
-        const isDistributed = activeConn?.deploymentMode === 'distributed' || Boolean(activeConn?.synapseNode?.host || activeConn?.databaseNode?.host || activeConn?.elementNode?.host);
-
-        let hasAll = false;
-        let hasSynapse = false;
-        let hasDatabase = false;
-        let hasElement = false;
-
-        wss.clients.forEach((c: any) => {
-          if (c.readyState === WebSocket.OPEN) {
-            if (!c.role || c.role === 'all') hasAll = true;
-            if (c.role === 'synapse') hasSynapse = true;
-            if (c.role === 'database') hasDatabase = true;
-            if (c.role === 'element') hasElement = true;
-          }
-        });
-
-        if (hasAll) {
-          const stats = await getFullSystemStats();
-          broadcastWS({ type: 'metrics', stats }, 'all');
-        }
-
-        if (isDistributed) {
-          if (hasSynapse) {
-            getNodeBatchMetrics(activeConn, 'synapse')
-              .then(s => broadcastWS({ type: 'node_metrics', role: 'synapse', stats: s }, 'synapse'))
-              .catch(() => {});
-          }
-          if (hasDatabase) {
-            getNodeBatchMetrics(activeConn, 'database')
-              .then(s => broadcastWS({ type: 'node_metrics', role: 'database', stats: s }, 'database'))
-              .catch(() => {});
-          }
-          if (hasElement) {
-            getNodeBatchMetrics(activeConn, 'element')
-              .then(s => broadcastWS({ type: 'node_metrics', role: 'element', stats: s }, 'element'))
-              .catch(() => {});
-          }
-        }
+        const stats = await getFullSystemStats();
+        broadcastWS({ type: 'metrics', stats });
       } catch (e) {}
     }
-  }, 3000);
+  }, 5000);
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log('Raven Matrix Admin Panel server running on http://0.0.0.0:' + PORT);

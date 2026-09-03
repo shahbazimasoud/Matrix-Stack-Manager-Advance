@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.44.0";
+export const PANEL_VERSION = "2.45.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.45.0",
+    date: "2026-09-03",
+    title: "Dynamic Multi-Server Connection Status Cards & Compact Action Bar",
+    changes: [
+      "Dynamic Multi-Server Profile Banner: Redesigned the Connected Server Profile header to dynamically display the connection name and individual status cards corresponding to each configured server (1, 2, or 3 servers).",
+      "Per-Server Status & Diagnostics: Each configured node card displays live WebSocket connectivity (Online, Checking, Disconnected), SSH endpoint host/port, service ports (8008, 5432, 80/443), and an independent 1-click test button.",
+      "WebSocket Connection Flapping Elimination: Unified telemetry and node diagnostics over a resilient WebSocket connection with 15s keepalive ping/pong heartbeat, removing race conditions and socket thrashing.",
+      "Compact Server Connection Buttons: Resized the top action buttons in Connection Manager (Export, Import, Add Server/Cluster) to a compact, inline flex-row layout."
+    ]
+  },
   {
     version: "2.44.0",
     date: "2026-09-03",

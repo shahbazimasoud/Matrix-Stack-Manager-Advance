@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { 
   ShieldCheck, 
   Cpu, 
@@ -19,6 +19,7 @@ import {
   HardDrive, 
   Activity, 
   Network, 
+  Layers,
   FileText, 
   Undo2, 
   Globe, 
@@ -693,6 +694,8 @@ export default function App() {
   const synapseWsRef = useRef<WebSocket | null>(null);
   const databaseWsRef = useRef<WebSocket | null>(null);
   const elementWsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const wsConnected = connectionStatus === 'connected';
@@ -721,7 +724,7 @@ export default function App() {
     setConnectionStatus(connected ? 'connected' : 'disconnected');
   };
 
-  const isDashboardLoading = !stats || isRefreshingStats || connectionStatus === 'connecting';
+  const isDashboardLoading = (!stats && connectionStatus === 'connecting') || (isRefreshingStats && !stats);
 
   // Fetch Panel Database on boot and check token verification via HttpOnly cookie or token
   useEffect(() => {
@@ -798,17 +801,15 @@ export default function App() {
     };
   }, [authToken]);
 
-  // Continuous Active Connection Health Monitor (verifies connection to selected server profile every 10 seconds)
+  // Active Connection Health Monitor (verifies connection on profile switch; continuous health is managed by live WebSocket)
   useEffect(() => {
     if (!authToken) return;
 
-    // Reset status to connecting whenever active connection changes
     setConnectionStatus('connecting');
 
     const checkActiveServerHealth = async () => {
       try {
         if (!activeConnection || activeConnection.id === 'local') {
-          // Check local backend health
           const res = await fetch('/api/auth/verify', {
             headers: { 'Authorization': `Bearer ${authToken}` }
           });
@@ -820,7 +821,7 @@ export default function App() {
             window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
           }
         } else {
-          // Check remote connection profile health via /api/connections/test
+          // Verify remote profile on switch
           const res = await fetch('/api/connections/test', {
             method: 'POST',
             headers: { 
@@ -834,20 +835,22 @@ export default function App() {
             setConnectionStatus('connected');
             window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: true } }));
           } else {
-            setConnectionStatus('disconnected');
-            window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
+            if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+              setConnectionStatus('disconnected');
+              window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
+            }
           }
         }
       } catch (err) {
-        setConnectionStatus('disconnected');
-        window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+          setConnectionStatus('disconnected');
+          window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
+        }
       }
     };
 
     checkActiveServerHealth();
-    const healthInterval = setInterval(checkActiveServerHealth, 10000);
-    return () => clearInterval(healthInterval);
-  }, [authToken, activeConnection]);
+  }, [authToken, activeConnection?.id]);
 
   // Auto re-setup WebSocket connections when active connection profile changes
   useEffect(() => {
@@ -856,42 +859,61 @@ export default function App() {
     }
   }, [activeConnection?.id, activeConnection?.deploymentMode]);
 
-  // Set up WebSocket connection(s) for real-time telemetry, CLI stream, and multi-server node channels
-  const createRoleWebSocket = (
-    role: 'synapse' | 'database' | 'element',
-    token: string,
-    connId?: string
-  ): WebSocket => {
+  // Unified rock-solid WebSocket setup for telemetry, metrics, and multi-server diagnostics
+  const setupWebSocket = (token: string) => {
+    if (!token || token === 'null' || token === 'undefined') return;
+
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.onerror = null;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    const connId = activeConnection?.id;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}&role=${role}${connId ? `&connId=${encodeURIComponent(connId)}` : ''}`;
+    const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}${connId ? `&connId=${encodeURIComponent(connId)}` : ''}`;
+    
+    setConnectionStatus('connecting');
+    setSynapseWsStatus('connecting');
+    setDatabaseWsStatus('connecting');
+    setElementWsStatus('connecting');
+
     const ws = new WebSocket(wsUrl);
 
-    const updateRoleStatus = (status: 'connecting' | 'connected' | 'disconnected') => {
-      if (role === 'synapse') setSynapseWsStatus(status);
-      if (role === 'database') setDatabaseWsStatus(status);
-      if (role === 'element') setElementWsStatus(status);
-    };
-
-    updateRoleStatus('connecting');
-
     ws.onopen = () => {
-      console.log(`WebSocket [${role}] established successfully.`);
-      updateRoleStatus('connected');
+      console.log("Matrix Admin Panel WebSocket connected.");
+      setConnectionStatus('connected');
       setWsConnected(true);
       window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: true } }));
 
-      // Immediately run live node health and API check on connection
-      if (role === 'synapse') {
+      // Run live node health checks
+      try {
         ws.send(JSON.stringify({ type: 'check_synapse_api' }));
-      } else if (role === 'database') {
         ws.send(JSON.stringify({ type: 'check_database' }));
-      } else if (role === 'element') {
         ws.send(JSON.stringify({ type: 'check_element' }));
-      }
+      } catch (_) {}
+
+      // Keepalive heartbeat ping every 15 seconds
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ type: 'ping' })); } catch (_) {}
+        }
+      }, 15000);
     };
 
     ws.onmessage = (event) => {
-      updateRoleStatus('connected');
+      setConnectionStatus('connected');
       setWsConnected(true);
       try {
         const data = JSON.parse(event.data);
@@ -904,211 +926,118 @@ export default function App() {
               return updated ? { ...s, status: updated.status } : s;
             }));
           }
+          // Update per-node status indicators from live clusterNodes
+          if (data.stats?.clusterNodes && Array.isArray(data.stats.clusterNodes)) {
+            const synNode = data.stats.clusterNodes.find((n: any) => n.role === 'synapse');
+            const dbNode = data.stats.clusterNodes.find((n: any) => n.role === 'database');
+            const elemNode = data.stats.clusterNodes.find((n: any) => n.role === 'element');
+            if (synNode) setSynapseWsStatus(synNode.status === 'online' ? 'connected' : synNode.status === 'error' ? 'disconnected' : 'connecting');
+            if (dbNode) setDatabaseWsStatus(dbNode.status === 'online' ? 'connected' : dbNode.status === 'error' ? 'disconnected' : 'connecting');
+            if (elemNode) setElementWsStatus(elemNode.status === 'online' ? 'connected' : elemNode.status === 'error' ? 'disconnected' : 'connecting');
+          } else {
+            setSynapseWsStatus('connected');
+            setDatabaseWsStatus('connected');
+            setElementWsStatus('connected');
+          }
         } else if (data.type === 'node_metrics') {
           setStats(prev => {
             if (!prev) return prev;
             const existingNodes = prev.clusterNodes || [];
             const updatedNodes = existingNodes.map(n => 
-              n.role === data.role ? { ...n, ...data.metrics, status: 'online' } : n
+              n.role === data.role ? { ...n, ...data.stats, status: 'online' } : n
             );
             return { ...prev, clusterNodes: updatedNodes };
           });
-        } else if (data.type === 'synapse_api_status') {
+          if (data.role === 'synapse') setSynapseWsStatus('connected');
+          if (data.role === 'database') setDatabaseWsStatus('connected');
+          if (data.role === 'element') setElementWsStatus('connected');
+        } else if (data.type === 'synapse_api_status' || data.type === 'api_check_result') {
           setSynapseApiCheck(data);
+          setSynapseWsStatus(data.ok ? 'connected' : 'disconnected');
           setIsCheckingSynapseApi(false);
-        } else if (data.type === 'database_status') {
+        } else if (data.type === 'database_status' || data.type === 'db_check_result') {
           setDatabaseCheck(data);
+          setDatabaseWsStatus(data.ok ? 'connected' : 'disconnected');
           setIsCheckingDatabase(false);
-        } else if (data.type === 'element_status') {
+        } else if (data.type === 'element_status' || data.type === 'element_check_result') {
           setElementCheck(data);
+          setElementWsStatus(data.ok ? 'connected' : 'disconnected');
           setIsCheckingElement(false);
         } else if (data.type === 'cmd_stdout') {
           setTerminalLogs(prev => [...prev, data.text]);
         } else if (data.type === 'cmd_start') {
           setIsExecuting(true);
-          setTerminalLogs(prev => [...prev, `\n[${role.toUpperCase()}] executing ${data.command}...`]);
+          setTerminalLogs(prev => [...prev, `\nroot@matrix-node:~# executing ${data.command}...`]);
         } else if (data.type === 'session_terminated') {
           setIsExecuting(false);
-          showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. جهت امنیت، سشن کاربری بسته شد.' : 'Panel update completed! User session closed for security.');
+          showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. جهت امنیت، سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Please log in again.');
           handleLogout();
+          setTimeout(() => {
+            try {
+              window.location.href = window.location.origin + window.location.pathname;
+            } catch (_) {}
+          }, 1500);
         } else if (data.type === 'cmd_end') {
           setIsExecuting(false);
-          setTerminalLogs(prev => [...prev, `\n[${role.toUpperCase()}] Command executed. Exit code: ${data.code}`]);
-          fetchConfig();
-          fetchLogs();
-          fetchBackups();
-        } else if (data.type === 'cmd_err') {
-          setIsExecuting(false);
-          setTerminalLogs(prev => [...prev, `\n❌ [${role.toUpperCase()}] ERROR: ${data.text}`]);
-        } else if (data.type === 'error') {
-          showToast('error', data.message);
-          if (role === 'synapse') setIsCheckingSynapseApi(false);
-          if (role === 'database') setIsCheckingDatabase(false);
-          if (role === 'element') setIsCheckingElement(false);
-        }
-      } catch (err) {
-        console.error(`Error parsing WebSocket message from ${role}:`, err);
-      }
-    };
-
-    ws.onerror = () => {
-      console.warn(`WebSocket [${role}] connection error.`);
-      updateRoleStatus('disconnected');
-    };
-
-    ws.onclose = () => {
-      console.log(`WebSocket [${role}] connection closed. Reconnecting in 5s...`);
-      updateRoleStatus('disconnected');
-      setTimeout(() => {
-        const currentToken = localStorage.getItem('admin_token') || token;
-        if (currentToken && currentToken !== 'null' && currentToken !== 'undefined') {
-          setupWebSocket(currentToken);
-        }
-      }, 5000);
-    };
-
-    return ws;
-  };
-
-  const setupWebSocket = (token: string) => {
-    if (!token || token === 'null' || token === 'undefined') return;
-
-    if (wsRef.current) {
-      wsRef.current.onclose = null;
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    if (synapseWsRef.current) {
-      synapseWsRef.current.onclose = null;
-      synapseWsRef.current.close();
-      synapseWsRef.current = null;
-    }
-    if (databaseWsRef.current) {
-      databaseWsRef.current.onclose = null;
-      databaseWsRef.current.close();
-      databaseWsRef.current = null;
-    }
-    if (elementWsRef.current) {
-      elementWsRef.current.onclose = null;
-      elementWsRef.current.close();
-      elementWsRef.current = null;
-    }
-
-    const connId = activeConnection?.id;
-
-    if (isDistributed) {
-      console.log("Initializing Multi-Server distributed WebSockets (Synapse, Database, Element)...");
-      const sWs = createRoleWebSocket('synapse', token, connId);
-      const dWs = createRoleWebSocket('database', token, connId);
-      const eWs = createRoleWebSocket('element', token, connId);
-
-      synapseWsRef.current = sWs;
-      databaseWsRef.current = dWs;
-      elementWsRef.current = eWs;
-      wsRef.current = sWs; // Primary fallback
-    } else {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}${connId ? `&connId=${encodeURIComponent(connId)}` : ''}`;
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        console.log("WebSocket connection established successfully.");
-        setWsConnected(true);
-        window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: true } }));
-        // Check local synapse API, database, and element on single server
-        ws.send(JSON.stringify({ type: 'check_synapse_api' }));
-        ws.send(JSON.stringify({ type: 'check_database' }));
-        ws.send(JSON.stringify({ type: 'check_element' }));
-      };
-
-      ws.onmessage = (event) => {
-        setWsConnected(true);
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.type === 'metrics') {
-            setStats(data.stats);
-            if (data.stats && data.stats.services) {
-              setServices(prev => prev.map(s => {
-                const updated = data.stats.services.find((us: any) => us.id === s.id);
-                return updated ? { ...s, status: updated.status } : s;
-              }));
-            }
-          } else if (data.type === 'synapse_api_status') {
-            setSynapseApiCheck(data);
-            setIsCheckingSynapseApi(false);
-          } else if (data.type === 'database_status') {
-            setDatabaseCheck(data);
-            setIsCheckingDatabase(false);
-          } else if (data.type === 'element_status') {
-            setElementCheck(data);
-            setIsCheckingElement(false);
-          } else if (data.type === 'cmd_stdout') {
-            setTerminalLogs(prev => [...prev, data.text]);
-          } else if (data.type === 'cmd_start') {
-            setIsExecuting(true);
-            setTerminalLogs(prev => [...prev, `\nroot@matrix-node:~# executing ${data.command}...`]);
-          } else if (data.type === 'session_terminated') {
-            setIsExecuting(false);
-            showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. جهت امنیت، سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Please log in again.');
+          setTerminalLogs(prev => [...prev, `\nCommand executed successfully. Exit code: ${data.code}`]);
+          if (data.isUpdate) {
+            showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Redirecting to login...');
             handleLogout();
             setTimeout(() => {
               try {
                 window.location.href = window.location.origin + window.location.pathname;
               } catch (_) {}
             }, 1500);
-          } else if (data.type === 'cmd_end') {
-            setIsExecuting(false);
-            setTerminalLogs(prev => [...prev, `\nCommand executed successfully. Exit code: ${data.code}`]);
-            if (data.isUpdate) {
-              showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Redirecting to login...');
-              handleLogout();
-              setTimeout(() => {
-                try {
-                  window.location.href = window.location.origin + window.location.pathname;
-                } catch (_) {}
-              }, 1500);
-            } else {
-              fetchConfig();
-              fetchLogs();
-              fetchBackups();
-            }
-          } else if (data.type === 'cmd_err') {
-            setIsExecuting(false);
-            setTerminalLogs(prev => [...prev, `\n❌ ERROR: ${data.text}`]);
-          } else if (data.type === 'error') {
-            showToast('error', data.message);
-            setIsCheckingSynapseApi(false);
-            setIsCheckingDatabase(false);
-            setIsCheckingElement(false);
+          } else {
+            fetchConfig();
+            fetchLogs();
+            fetchBackups();
           }
-        } catch (err) {
-          console.error("Error parsing WebSocket message:", err);
+        } else if (data.type === 'cmd_err') {
+          setIsExecuting(false);
+          setTerminalLogs(prev => [...prev, `\n❌ ERROR: ${data.text}`]);
+        } else if (data.type === 'error') {
+          showToast('error', data.message);
+          setIsCheckingSynapseApi(false);
+          setIsCheckingDatabase(false);
+          setIsCheckingElement(false);
         }
-      };
+      } catch (err) {
+        console.error("Error parsing WebSocket message:", err);
+      }
+    };
 
-      ws.onerror = () => {
-        console.warn("WebSocket connection error.");
-        setWsConnected(false);
-        window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
-      };
+    ws.onerror = () => {
+      console.warn("WebSocket connection error.");
+      setWsConnected(false);
+      window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
+    };
 
-      ws.onclose = () => {
-        console.log("WebSocket connection closed. Reconnecting in 5s...");
-        setWsConnected(false);
-        window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
-        setTimeout(() => {
+    ws.onclose = () => {
+      console.log("WebSocket closed. Scheduling reconnect in 4s...");
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+      setConnectionStatus('connecting');
+      setWsConnected(false);
+      window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
+
+      if (!reconnectTimeoutRef.current) {
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectTimeoutRef.current = null;
           const currentToken = localStorage.getItem('admin_token') || token;
           if (currentToken && currentToken !== 'null' && currentToken !== 'undefined') {
-            if (wsRef.current === ws || !wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
-              setupWebSocket(currentToken);
-            }
+            setupWebSocket(currentToken);
           }
-        }, 5000);
-      };
+        }, 4000);
+      }
+    };
 
-      wsRef.current = ws;
-    }
+    wsRef.current = ws;
+    synapseWsRef.current = ws;
+    databaseWsRef.current = ws;
+    elementWsRef.current = ws;
   };
 
   const checkSynapseApiOverWs = () => {
@@ -1143,6 +1072,102 @@ export default function App() {
       showToast('error', isRtl ? 'وب‌سوکت سرور المنت متصل نیست' : 'Element WebSocket is not connected');
     }
   };
+
+  // Configured Server Nodes for the active connection profile (determines 1, 2, or 3 servers dynamically)
+  const configuredServers = useMemo(() => {
+    if (!activeConnection) return [];
+
+    const isDist = activeConnection.deploymentMode === 'distributed';
+    const synNode = activeConnection.synapseNode;
+    const dbNode = activeConnection.databaseNode;
+    const elemNode = activeConnection.elementNode;
+
+    const synHost = synNode?.host || activeConnection.host || '127.0.0.1';
+    const synPort = synNode?.port || activeConnection.port || 22;
+    const synServicePort = synNode?.servicePort || activeConnection.servicePort || 8008;
+
+    const list: Array<{
+      id: string;
+      role: 'synapse' | 'database' | 'element';
+      name: string;
+      roleTitle: string;
+      host: string;
+      port: number;
+      servicePort: number | string;
+      status: 'connecting' | 'connected' | 'disconnected';
+      checkData: any;
+      icon: any;
+      onCheck: () => void;
+      isChecking: boolean;
+    }> = [
+      {
+        id: 'synapse',
+        role: 'synapse',
+        name: isRtl ? 'سرور سیناپس (Synapse)' : 'Synapse Homeserver',
+        roleTitle: isRtl ? 'هسته اصلی ماتریکس' : 'Matrix Core Homeserver',
+        host: synHost,
+        port: synPort,
+        servicePort: synServicePort,
+        status: synapseWsStatus,
+        checkData: synapseApiCheck,
+        icon: Server,
+        onCheck: () => checkSynapseApiOverWs(),
+        isChecking: isCheckingSynapseApi
+      }
+    ];
+
+    // Database Server: if distributed or has a designated host
+    const dbHost = dbNode?.host?.trim() || (isDist ? '' : (activeConnection.dbHost && activeConnection.dbHost !== activeConnection.host ? activeConnection.dbHost : ''));
+    if (dbHost) {
+      list.push({
+        id: 'database',
+        role: 'database',
+        name: isRtl ? 'سرور دیتابیس (PostgreSQL)' : 'PostgreSQL Database',
+        roleTitle: isRtl ? 'پایگاه‌داده و تراکنش‌ها' : 'SQL Database Storage',
+        host: dbHost,
+        port: dbNode?.port || 22,
+        servicePort: dbNode?.servicePort || 5432,
+        status: databaseWsStatus,
+        checkData: databaseCheck,
+        icon: Database,
+        onCheck: () => checkDatabaseOverWs(),
+        isChecking: isCheckingDatabase
+      });
+    }
+
+    // Element Server: if distributed or has a designated host
+    const elemHost = elemNode?.host?.trim();
+    if (elemHost) {
+      list.push({
+        id: 'element',
+        role: 'element',
+        name: isRtl ? 'سرور کلاینت المنت (Element)' : 'Element Web Client',
+        roleTitle: isRtl ? 'رابط وب کاربر' : 'Web UI Client',
+        host: elemHost,
+        port: elemNode?.port || 22,
+        servicePort: elemNode?.servicePort || 80,
+        status: elementWsStatus,
+        checkData: elementCheck,
+        icon: Globe,
+        onCheck: () => checkElementOverWs(),
+        isChecking: isCheckingElement
+      });
+    }
+
+    return list;
+  }, [
+    activeConnection,
+    synapseWsStatus,
+    databaseWsStatus,
+    elementWsStatus,
+    synapseApiCheck,
+    databaseCheck,
+    elementCheck,
+    isCheckingSynapseApi,
+    isCheckingDatabase,
+    isCheckingElement,
+    isRtl
+  ]);
 
   // Fetch functions for panel REST API
   const fetchConfig = (token = authToken) => {
@@ -2631,11 +2656,12 @@ export default function App() {
               ) : (
                 <div className={`relative overflow-hidden rounded-3xl transition-all duration-300 p-5 md:p-6 ${
                   connectionStatus === 'connected' 
-                    ? 'bg-gradient-to-r from-emerald-950/10 to-teal-950/10 border border-emerald-500/20 shadow-[0_10px_30px_rgba(16,185,129,0.03)]' 
+                    ? 'bg-gradient-to-br from-slate-900/80 via-slate-900/90 to-slate-950/95 border border-emerald-500/20 shadow-[0_10px_30px_rgba(16,185,129,0.03)]' 
                     : connectionStatus === 'connecting'
-                    ? 'bg-gradient-to-r from-amber-950/20 via-slate-900/30 to-slate-900/40 border border-amber-500/30 shadow-[0_10px_30px_rgba(245,158,11,0.05)]'
-                    : 'bg-gradient-to-r from-red-950/35 via-rose-950/20 to-slate-900/40 border border-red-500/40 shadow-[0_10px_30px_rgba(239,68,68,0.15)]'
+                    ? 'bg-gradient-to-br from-slate-900/80 via-amber-950/15 to-slate-950/95 border border-amber-500/30 shadow-[0_10px_30px_rgba(245,158,11,0.05)]'
+                    : 'bg-gradient-to-br from-slate-900/80 via-red-950/20 to-slate-950/95 border border-red-500/40 shadow-[0_10px_30px_rgba(239,68,68,0.15)]'
                 }`}>
+                  {/* Top Bar: Connection Name, Cluster Mode, & Actions */}
                   <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div className="flex items-center gap-4">
                       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 transition-all ${
@@ -2654,54 +2680,41 @@ export default function App() {
                         )}
                       </div>
                       <div>
-                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                          <span>
-                            {connectionStatus === 'connected' 
-                              ? t.connectedProfileLabel 
-                              : connectionStatus === 'connecting'
-                              ? (isRtl ? 'بررسی وضعیت سرور...' : 'Checking Server Connection...')
-                              : (isRtl ? 'قطعی ارتباط با سرور ریموت' : 'Remote Server Connection Lost')
-                            }
+                        <div className="flex items-center flex-wrap gap-2">
+                          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                            {t.connectedProfileLabel}
+                          </h3>
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/5 border border-white/10 text-slate-300">
+                            <Layers className="w-3 h-3 text-indigo-400" />
+                            <span>
+                              {configuredServers.length > 1
+                                ? (isRtl ? `خوشه توزیع‌شده (${configuredServers.length} سرور)` : `Distributed Cluster (${configuredServers.length} Servers)`)
+                                : (isRtl ? 'سرور یکپارچه (Standalone)' : 'Standalone (Single Server)')
+                              }
+                            </span>
                           </span>
                           {connectionStatus === 'connected' ? (
-                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-bold text-emerald-400">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                              <span>{isRtl ? 'فعال و متصل' : 'ALL CONNECTED'}</span>
+                            </span>
                           ) : connectionStatus === 'connecting' ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-[10px] font-bold text-amber-300">
-                              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                              <span>{isRtl ? 'در حال اتصال' : 'CONNECTING'}</span>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-[10px] font-bold text-amber-400">
+                              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                              <span>{isRtl ? 'در حال اتصال...' : 'CONNECTING...'}</span>
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-500/20 border border-red-500/40 text-[10px] font-bold text-red-300">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 text-[10px] font-bold text-red-400">
                               <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
                               <span>{isRtl ? 'قطع ارتباط' : 'DISCONNECTED'}</span>
                             </span>
                           )}
-                        </h3>
-                        <p className={`text-md font-bold font-mono mt-0.5 transition-colors ${
-                          connectionStatus === 'connected' 
-                            ? 'text-emerald-400' 
-                            : connectionStatus === 'connecting'
-                            ? 'text-amber-300'
-                            : 'text-red-400'
-                        }`}>
-                          {activeConnection?.name} ({activeConnection?.host}:{activeConnection?.port})
+                        </div>
+                        <p className="text-lg font-bold font-mono text-white mt-1">
+                          {activeConnection?.name}
                         </p>
-                        <p className={`text-xs mt-1 ${
-                          connectionStatus === 'connected' 
-                            ? 'text-slate-400' 
-                            : connectionStatus === 'connecting'
-                            ? 'text-amber-200/80 font-medium'
-                            : 'text-red-300/90 font-medium'
-                        }`}>
-                          {connectionStatus === 'connected' 
-                            ? t.connectedProfileDesc 
-                            : connectionStatus === 'connecting'
-                            ? (isRtl 
-                                ? 'در حال برقراری و صحت‌سنجی ارتباط با سرور ریموت ماتریکس...' 
-                                : 'Establishing and verifying connection to remote Matrix server...')
-                            : (isRtl 
-                                ? 'ارتباط وب‌سوکت با سرور ریموت قطع گردیده است. علامت قطعی فعال است و سیستم در حال تلاش برای برقراری مجدد می‌باشد.' 
-                                : 'WebSocket connection to remote server lost. Disconnected indicator active, attempting reconnection...')}
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {t.connectedProfileDesc || 'Matrix homeserver, Element client, and Postgres Database are actively being managed over SSH tunnel.'}
                         </p>
                       </div>
                     </div>
@@ -2724,9 +2737,7 @@ export default function App() {
                             ? (t.refreshing || 'Refreshing...') 
                             : connectionStatus === 'connecting'
                             ? (isRtl ? 'در حال اتصال...' : 'Connecting...')
-                            : connectionStatus === 'connected'
-                            ? (t.refreshStatsBtn || 'Refresh Stats') 
-                            : (isRtl ? 'تلاش مجدد برای اتصال' : 'Retry Connection')
+                            : (t.refreshStatsBtn || 'Refresh Stats')
                           }
                         </span>
                       </button>
@@ -2739,6 +2750,95 @@ export default function App() {
                         <ArrowRight className="w-3.5 h-3.5" />
                       </button>
                     </div>
+                  </div>
+
+                  {/* Sub-cards: Individual Status of Configured Servers (1, 2, or 3 servers) */}
+                  <div className={`mt-5 pt-4 border-t border-white/10 grid grid-cols-1 ${
+                    configuredServers.length === 2 ? 'sm:grid-cols-2' : configuredServers.length >= 3 ? 'sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'
+                  } gap-3`}>
+                    {configuredServers.map((server) => {
+                      const IconComp = server.icon;
+                      const isConnected = server.status === 'connected';
+                      const isConnecting = server.status === 'connecting';
+                      return (
+                        <div 
+                          key={server.id}
+                          className={`rounded-2xl p-4 transition-all duration-200 border ${
+                            isConnected
+                              ? 'bg-slate-900/60 border-emerald-500/20 hover:border-emerald-500/40 shadow-sm'
+                              : isConnecting
+                              ? 'bg-slate-900/60 border-amber-500/25 hover:border-amber-500/40'
+                              : 'bg-slate-900/60 border-red-500/30 hover:border-red-500/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                                isConnected
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                  : isConnecting
+                                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                              }`}>
+                                <IconComp className="w-4 h-4" />
+                              </div>
+                              <div className="truncate">
+                                <h4 className="text-xs font-bold text-white truncate">{server.name}</h4>
+                                <p className="text-[10px] text-slate-400 truncate">{server.roleTitle}</p>
+                              </div>
+                            </div>
+                            
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                              isConnected
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                                : isConnecting
+                                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                                : 'bg-red-500/10 text-red-400 border border-red-500/30'
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${
+                                isConnected ? 'bg-emerald-400 animate-ping' : isConnecting ? 'bg-amber-400 animate-spin' : 'bg-red-400'
+                              }`} />
+                              <span>
+                                {isConnected
+                                  ? (isRtl ? 'متصل' : 'Connected')
+                                  : isConnecting
+                                  ? (isRtl ? 'بررسی...' : 'Checking...')
+                                  : (isRtl ? 'قطع' : 'Disconnected')}
+                              </span>
+                            </span>
+                          </div>
+
+                          <div className="space-y-1.5 text-[11px] font-mono text-slate-300 bg-black/20 rounded-xl p-2.5 border border-white/5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-slate-500 text-[10px] uppercase font-sans">{isRtl ? 'آدرس SSH' : 'SSH Endpoint'}:</span>
+                              <span className="text-slate-200 font-semibold">{server.host}:{server.port}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-slate-500 text-[10px] uppercase font-sans">{isRtl ? 'پورت سرویس' : 'Service Port'}:</span>
+                              <span className="text-indigo-300 font-semibold">:{server.servicePort}</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-2.5 pt-2 border-t border-white/5 flex items-center justify-between">
+                            <span className="text-[10px] text-slate-400 truncate max-w-[120px]">
+                              {server.checkData?.version 
+                                ? `v${server.checkData.version}` 
+                                : server.checkData?.db_version 
+                                ? server.checkData.db_version 
+                                : (isRtl ? 'تونل SSH فعال' : 'SSH Tunnel Active')}
+                            </span>
+                            <button
+                              onClick={server.onCheck}
+                              disabled={server.isChecking}
+                              className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-medium text-slate-300 hover:text-white transition-all cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${server.isChecking ? 'animate-spin' : ''}`} />
+                              <span>{isRtl ? 'تست وضعیت' : 'Test Node'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )
