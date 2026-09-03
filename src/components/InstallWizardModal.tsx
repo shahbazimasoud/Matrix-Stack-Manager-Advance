@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, Check, AlertCircle, ShieldCheck, ChevronRight, ChevronLeft, 
@@ -27,7 +27,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
   lang,
   isLightMode,
   defaultHost = '127.0.0.1',
-  defaultDomain = 'example.com',
+  defaultDomain = '',
   activeConnection,
   connections = []
 }) => {
@@ -108,7 +108,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
   const [profileLoadedNotice, setProfileLoadedNotice] = useState<string | null>(null);
 
   // Load connection profile data into wizard inputs
-  const loadProfileData = (conn: any) => {
+  const loadProfileData = (conn: any, isExplicitSelect: boolean = false) => {
     if (!conn) return;
 
     // Multi-node auto-detection if connection has cluster info or separate DB host
@@ -119,23 +119,29 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
     }
 
     // Domains & Networking
-    const domainVal = conn.domain || conn.baseDomain || defaultDomain || '';
-    if (domainVal) setBaseDomain(domainVal);
-    if (conn.hsDomain) {
-      setHsDomain(conn.hsDomain);
-    } else if (domainVal) {
-      setHsDomain(`matrix.${domainVal}`);
+    // Only update domains from profile if profile actually has non-empty domain info,
+    // or if the wizard's domains are currently blank/default, so we don't clobber the user's manual inputs!
+    const connBaseDomain = conn.domain || conn.baseDomain || '';
+    const connHsDomain = conn.hsDomain || (connBaseDomain ? `matrix.${connBaseDomain}` : '');
+    const connElementDomain = conn.elementDomain || (connBaseDomain ? `chat.${connBaseDomain}` : '');
+
+    if (connBaseDomain) {
+      setBaseDomain(prev => (!prev || prev === 'example.com' || isExplicitSelect ? connBaseDomain : prev));
     }
-    if (conn.elementDomain) {
-      setElementDomain(conn.elementDomain);
-    } else if (domainVal) {
-      setElementDomain(`chat.${domainVal}`);
+    if (connHsDomain) {
+      setHsDomain(prev => (!prev || prev === 'matrix.example.com' || isExplicitSelect ? connHsDomain : prev));
+      setHasManuallyEditedHs(true);
     }
+    if (connElementDomain) {
+      setElementDomain(prev => (!prev || prev === 'chat.example.com' || isExplicitSelect ? connElementDomain : prev));
+      setHasManuallyEditedElement(true);
+    }
+
     if (conn.host) setPublicIp(conn.host);
 
     // 1. Synapse Node
     const syn = conn.synapseNode || conn;
-    setSynapseHost(syn.host || conn.host || '');
+    setSynapseHost(prev => prev && !isExplicitSelect ? prev : (syn.host || conn.host || ''));
     setSynapsePort(Number(syn.port || conn.port) || 22);
     setSynapseUsername(syn.username !== undefined ? syn.username : (conn.username || 'root'));
     const synAuth = syn.authType || conn.authType || 'password';
@@ -145,7 +151,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
 
     // 2. Database Node
     const db = conn.databaseNode || {};
-    setDbHost(db.host || conn.dbHost || '');
+    setDbHost(prev => prev && !isExplicitSelect ? prev : (db.host || conn.dbHost || ''));
     setDbSshPort(Number(db.port) || 22);
     setDbUsername(db.username !== undefined ? db.username : 'root');
     const dbAuth = db.authType || 'password';
@@ -159,7 +165,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
 
     // 3. Element Web Node
     const elem = conn.elementNode || {};
-    setElementHost(elem.host || '');
+    setElementHost(prev => prev && !isExplicitSelect ? prev : (elem.host || ''));
     setElementSshPort(Number(elem.port) || 22);
     setElementUsername(elem.username !== undefined ? elem.username : 'root');
     const elemAuth = elem.authType || 'password';
@@ -168,26 +174,38 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
     setElementPrivateKey(elem.privateKey !== undefined ? elem.privateKey : '');
   };
 
-  // Initialize and auto pre-populate values when modal opens or activeConnection changes
+  const isInitializedRef = useRef(false);
+
+  // Initialize and auto pre-populate values when modal opens (ONLY ONCE per open session)
   useEffect(() => {
     if (isOpen) {
-      const activeConn = activeConnection || (connections && connections.find((c: any) => c.isActive)) || (connections && connections[0]);
-      if (activeConn) {
-        setSelectedProfileId(activeConn.id || '');
-        loadProfileData(activeConn);
-      } else {
-        const initBase = defaultDomain || 'example.com';
-        const initHost = defaultHost || '127.0.0.1';
+      if (!isInitializedRef.current) {
+        isInitializedRef.current = true;
+        const activeConn = activeConnection || (connections && connections.find((c: any) => c.isActive)) || (connections && connections[0]);
+        if (activeConn) {
+          setSelectedProfileId(activeConn.id || '');
+          loadProfileData(activeConn, false);
+        } else {
+          const initBase = defaultDomain && defaultDomain !== 'example.com' ? defaultDomain : '';
+          const initHost = defaultHost || '127.0.0.1';
 
-        if (!baseDomain) setBaseDomain(initBase);
-        if (!hsDomain) setHsDomain(initBase ? `matrix.${initBase}` : 'matrix.example.com');
-        if (!elementDomain) setElementDomain(initBase ? `chat.${initBase}` : 'chat.example.com');
-        if (!publicIp) setPublicIp(initHost);
-        if (!leEmail) setLeEmail(`admin@${initBase}`);
-        if (!synapseHost) setSynapseHost(initHost);
+          if (!baseDomain && initBase) setBaseDomain(initBase);
+          if (!hsDomain && initBase) setHsDomain(`matrix.${initBase}`);
+          if (!elementDomain && initBase) setElementDomain(`chat.${initBase}`);
+          if (!publicIp) setPublicIp(initHost);
+          if (!leEmail && initBase) setLeEmail(`admin@${initBase}`);
+          if (!synapseHost) setSynapseHost(initHost);
+        }
       }
+    } else {
+      isInitializedRef.current = false;
     }
-  }, [isOpen, activeConnection]);
+  }, [isOpen]);
+
+  // Computed display domains for summary and review
+  const displayHs = hsDomain.trim() || (synapseHost.trim().includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(synapseHost.trim()) && synapseHost.trim() !== 'localhost' ? synapseHost.trim() : (baseDomain ? `matrix.${baseDomain}` : (defaultDomain ? `matrix.${defaultDomain}` : 'matrix.example.com')));
+  const displayElement = elementDomain.trim() || (elementHost.trim().includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(elementHost.trim()) && elementHost.trim() !== 'localhost' ? elementHost.trim() : (baseDomain ? `chat.${baseDomain}` : (defaultDomain ? `chat.${defaultDomain}` : 'chat.example.com')));
+  const displayBase = baseDomain.trim() || (displayHs.startsWith('matrix.') ? displayHs.replace(/^matrix\./, '') : (defaultDomain || 'example.com'));
 
   if (!isOpen) return null;
 
@@ -257,11 +275,46 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
       return;
     }
 
-    const effectiveHsDomain = hsDomain.trim() || (defaultDomain ? `matrix.${defaultDomain}` : 'matrix.example.com');
-    const effectiveElementDomain = elementDomain.trim() || (defaultDomain ? `chat.${defaultDomain}` : 'chat.example.com');
-    const effectiveBaseDomain = baseDomain.trim() || defaultDomain || 'example.com';
+    // Smart resolution of Homeserver Domain
+    let effectiveHsDomain = hsDomain.trim();
+    const synIsDomain = synapseHost.trim() && synapseHost.trim().includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(synapseHost.trim()) && synapseHost.trim() !== 'localhost';
+    if ((!effectiveHsDomain || effectiveHsDomain === 'matrix.example.com') && synIsDomain) {
+      effectiveHsDomain = synapseHost.trim();
+    }
+    if (!effectiveHsDomain) {
+      effectiveHsDomain = defaultDomain && defaultDomain !== 'example.com' 
+        ? `matrix.${defaultDomain}` 
+        : (baseDomain && baseDomain !== 'example.com' ? `matrix.${baseDomain}` : 'matrix.example.com');
+    }
+
+    // Smart resolution of Base Domain
+    let effectiveBaseDomain = baseDomain.trim();
+    if ((!effectiveBaseDomain || effectiveBaseDomain === 'example.com') && effectiveHsDomain && effectiveHsDomain !== 'matrix.example.com') {
+      const parts = effectiveHsDomain.split('.');
+      if (parts.length >= 3 && (parts[0] === 'matrix' || parts[0] === 'synapse')) {
+        effectiveBaseDomain = parts.slice(1).join('.');
+      } else if (parts.length >= 2) {
+        effectiveBaseDomain = effectiveHsDomain;
+      }
+    }
+    if (!effectiveBaseDomain) {
+      effectiveBaseDomain = defaultDomain || 'example.com';
+    }
+
+    // Smart resolution of Element Domain
+    let effectiveElementDomain = elementDomain.trim();
+    const elemIsDomain = elementHost.trim() && elementHost.trim().includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(elementHost.trim()) && elementHost.trim() !== 'localhost';
+    if ((!effectiveElementDomain || effectiveElementDomain === 'chat.example.com') && elemIsDomain) {
+      effectiveElementDomain = elementHost.trim();
+    }
+    if (!effectiveElementDomain || effectiveElementDomain === 'chat.example.com') {
+      effectiveElementDomain = effectiveBaseDomain !== 'example.com' 
+        ? `chat.${effectiveBaseDomain}` 
+        : (effectiveHsDomain.startsWith('matrix.') ? effectiveHsDomain.replace(/^matrix\./, 'chat.') : 'chat.example.com');
+    }
+
     const effectivePublicIp = (deploymentMode === 'distributed' ? synapseHost.trim() : publicIp.trim()) || defaultHost || '127.0.0.1';
-    const effectiveLeEmail = leEmail.trim() || `admin@${defaultDomain || 'example.com'}`;
+    const effectiveLeEmail = leEmail.trim() || `admin@${effectiveBaseDomain}`;
 
     const effectiveLdapUri = ldapUri.trim() || 'ldap://localhost:389';
     const effectiveLdapBindDn = ldapBindDn.trim() || 'cn=admin,dc=example,dc=com';
@@ -640,7 +693,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                             setSelectedProfileId(pId);
                             const found = connections.find((c: any) => c.id === pId);
                             if (found) {
-                              loadProfileData(found);
+                              loadProfileData(found, true);
                               setProfileLoadedNotice(found.name || found.host);
                               setTimeout(() => setProfileLoadedNotice(null), 3000);
                             }
@@ -663,7 +716,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                           onClick={() => {
                             const found = connections.find((c: any) => c.id === selectedProfileId) || connections[0];
                             if (found) {
-                              loadProfileData(found);
+                              loadProfileData(found, true);
                               setProfileLoadedNotice(found.name || found.host);
                               setTimeout(() => setProfileLoadedNotice(null), 3000);
                             }
@@ -763,8 +816,19 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                           type="text"
                           value={hsDomain}
                           onChange={(e) => {
-                            setHsDomain(e.target.value);
+                            const val = e.target.value;
+                            setHsDomain(val);
                             setHasManuallyEditedHs(true);
+                            if ((!baseDomain || baseDomain === 'example.com') && val.includes('.')) {
+                              const parts = val.split('.');
+                              if (parts.length >= 3 && (parts[0] === 'matrix' || parts[0] === 'synapse')) {
+                                const derivedBase = parts.slice(1).join('.');
+                                setBaseDomain(derivedBase);
+                                if (!hasManuallyEditedElement || elementDomain === 'chat.example.com' || !elementDomain) {
+                                  setElementDomain(`chat.${derivedBase}`);
+                                }
+                              }
+                            }
                           }}
                           placeholder={t.hsDomainPlaceholder}
                           className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none transition-all font-mono ${
@@ -914,7 +978,24 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                             <input 
                               type="text"
                               value={synapseHost}
-                              onChange={(e) => setSynapseHost(e.target.value)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setSynapseHost(val);
+                                const isDomain = val.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(val) && val !== 'localhost';
+                                if (isDomain && (!hasManuallyEditedHs || !hsDomain || hsDomain === 'matrix.example.com')) {
+                                  setHsDomain(val);
+                                  const parts = val.split('.');
+                                  if (parts.length >= 3) {
+                                    const derivedBase = parts.slice(1).join('.');
+                                    if (!baseDomain || baseDomain === 'example.com') {
+                                      setBaseDomain(derivedBase);
+                                      if (!hasManuallyEditedElement || !elementDomain || elementDomain === 'chat.example.com') {
+                                        setElementDomain(`chat.${derivedBase}`);
+                                      }
+                                    }
+                                  }
+                                }
+                              }}
                               placeholder="e.g. 192.168.1.10 or matrix.company.com"
                               className={`w-full border rounded-xl px-3.5 py-2 text-xs font-mono focus:outline-none transition-all ${
                                 formErrors.synapseHost ? 'border-red-500 bg-red-50/10 text-red-500' : isLightMode ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-white/10 text-white'
@@ -1156,7 +1237,14 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                             <input 
                               type="text"
                               value={elementHost}
-                              onChange={(e) => setElementHost(e.target.value)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setElementHost(val);
+                                const isDomain = val.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(val) && val !== 'localhost';
+                                if (isDomain && (!hasManuallyEditedElement || !elementDomain || elementDomain === 'chat.example.com')) {
+                                  setElementDomain(val);
+                                }
+                              }}
                               placeholder="e.g. 192.168.1.12 or chat.company.com"
                               className={`w-full border rounded-xl px-3.5 py-2 text-xs font-mono focus:outline-none transition-all ${
                                 formErrors.elementHost ? 'border-red-500 bg-red-50/10 text-red-500' : isLightMode ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-white/10 text-white'
@@ -1714,7 +1802,7 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                               <span>Synapse Node</span>
                             </div>
                             <div className="text-xs font-mono font-semibold truncate">{synapseHost || '127.0.0.1'}</div>
-                            <div className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">https://{hsDomain || `matrix.${defaultDomain}`}</div>
+                            <div className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">https://{displayHs}</div>
                           </div>
 
                           {/* Database Node Summary */}
@@ -1734,22 +1822,22 @@ export const InstallWizardModal: React.FC<InstallWizardModalProps> = ({
                               <span>Element Web Node</span>
                             </div>
                             <div className="text-xs font-mono font-semibold truncate">{elementHost || '127.0.0.1'}</div>
-                            <div className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">https://{elementDomain || `chat.${defaultDomain}`}</div>
+                            <div className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">https://{displayElement}</div>
                           </div>
                         </div>
                       ) : (
                         <div className={`grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-xs font-mono ${isLightMode ? 'text-slate-600' : 'text-slate-300'}`}>
                           <div className={`flex justify-between border-b pb-1 ${isLightMode ? 'border-slate-100' : 'border-white/5'}`}>
                             <span className={isLightMode ? 'text-slate-400' : 'text-slate-500'}>Homeserver:</span>
-                            <span className={`${isLightMode ? 'text-indigo-600' : 'text-indigo-400'} font-bold`}>https://{hsDomain || (defaultDomain ? `matrix.${defaultDomain}` : 'matrix.company.local')}</span>
+                            <span className={`${isLightMode ? 'text-indigo-600' : 'text-indigo-400'} font-bold`}>https://{displayHs}</span>
                           </div>
                           <div className={`flex justify-between border-b pb-1 ${isLightMode ? 'border-slate-100' : 'border-white/5'}`}>
                             <span className={isLightMode ? 'text-slate-400' : 'text-slate-500'}>Element:</span>
-                            <span className={`${isLightMode ? 'text-purple-600' : 'text-purple-400'} font-bold`}>https://{elementDomain || (defaultDomain ? `chat.${defaultDomain}` : 'chat.company.local')}</span>
+                            <span className={`${isLightMode ? 'text-purple-600' : 'text-purple-400'} font-bold`}>https://{displayElement}</span>
                           </div>
                           <div className={`flex justify-between border-b pb-1 ${isLightMode ? 'border-slate-100' : 'border-white/5'}`}>
                             <span className={isLightMode ? 'text-slate-400' : 'text-slate-500'}>Base Domain:</span>
-                            <span className={isLightMode ? 'text-slate-700' : 'text-slate-400'}>{baseDomain || defaultDomain || 'company.local'}</span>
+                            <span className={isLightMode ? 'text-slate-700' : 'text-slate-400'}>{displayBase}</span>
                           </div>
                           <div className={`flex justify-between border-b pb-1 ${isLightMode ? 'border-slate-100' : 'border-white/5'}`}>
                             <span className={isLightMode ? 'text-slate-400' : 'text-slate-500'}>Public IP:</span>

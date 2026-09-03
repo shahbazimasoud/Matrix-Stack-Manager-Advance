@@ -28189,7 +28189,7 @@ chmod 644 /etc/matrix-synapse/log.yaml
 # Clean up any conflicting settings in conf.d/ to prevent duplicate-key ConfigError
 mkdir -p /etc/matrix-synapse/conf.d.bak
 cp -rf /etc/matrix-synapse/conf.d/* /etc/matrix-synapse/conf.d.bak/ 2>/dev/null || true
-rm -f /etc/matrix-synapse/conf.d/server_name.yaml /etc/matrix-synapse/conf.d/report_stats.yaml /etc/matrix-synapse/conf.d/database.yaml /etc/matrix-synapse/conf.d/*sqlite* /etc/matrix-synapse/conf.d/*postgres* 2>/dev/null || true
+rm -f /etc/matrix-synapse/conf.d/*listener* /etc/matrix-synapse/conf.d/*port* /etc/matrix-synapse/conf.d/server_name.yaml /etc/matrix-synapse/conf.d/report_stats.yaml /etc/matrix-synapse/conf.d/database.yaml /etc/matrix-synapse/conf.d/*sqlite* /etc/matrix-synapse/conf.d/*postgres* 2>/dev/null || true
 
 # Inject verified PostgreSQL credentials and network listener into homeserver.yaml
 CONF_FILE="/etc/matrix-synapse/homeserver.yaml"
@@ -28247,7 +28247,7 @@ data['listeners'] = [
         'tls': False,
         'type': 'http',
         'x_forwarded': True,
-        'bind_addresses': ['0.0.0.0', '127.0.0.1', '::'],
+        'bind_addresses': ['0.0.0.0'],
         'resources': [{'names': ['client', 'federation'], 'compress': False}]
     }
 ]
@@ -28407,9 +28407,27 @@ PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELEC
 rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/element* 2>/dev/null || true
 ln -sf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix-synapse.conf 2>/dev/null || true
 
+# Stop matrix-synapse and cleanly free port 8008 before restarting
+systemctl stop matrix-synapse 2>/dev/null || true
+pkill -9 -f "synapse.app.homeserver" 2>/dev/null || true
+if command -v fuser >/dev/null 2>&1; then
+  fuser -k -9 8008/tcp 2>/dev/null || true
+fi
+PID_8008=$(ss -tulpn '( sport = :8008 )' 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | tr '\n' ' ')
+[ -n "$PID_8008" ] && kill -9 $PID_8008 2>/dev/null || true
+sleep 1
+
+# Ensure directory permissions and log files for matrix-synapse user
+mkdir -p /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse /var/lib/matrix-synapse/media
+touch /var/log/matrix-synapse/homeserver.log
 chown -R matrix-synapse:matrix-synapse /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || \
 chown -R matrix-synapse:nogroup /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || true
+chmod 755 /etc/matrix-synapse /var/lib/matrix-synapse /var/log/matrix-synapse 2>/dev/null || true
 chmod 644 /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
+chmod 644 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
+if [ -f "/etc/matrix-synapse/${config.HS_DOMAIN}.signing.key" ]; then
+  chmod 640 "/etc/matrix-synapse/${config.HS_DOMAIN}.signing.key" 2>/dev/null || true
+fi
 
 SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
 [ ! -f "$SYN_PYTHON" ] && SYN_PYTHON="$(which python3)"
@@ -28421,11 +28439,11 @@ sudo -u matrix-synapse "$SYN_PYTHON" -m synapse.app.homeserver \
   --config-path=/etc/matrix-synapse/conf.d/ \
   --check-keys 2>&1 || true
 
-# Reset systemd failure rate-limiting and restart cleanly
+# Reset systemd failure rate-limiting and start cleanly
 systemctl daemon-reload
 systemctl reset-failed matrix-synapse 2>/dev/null || true
 systemctl enable matrix-synapse 2>/dev/null || true
-systemctl restart matrix-synapse 2>&1 || true
+systemctl start matrix-synapse 2>&1 || true
 
 nginx -t 2>/dev/null && systemctl restart nginx || true
 
