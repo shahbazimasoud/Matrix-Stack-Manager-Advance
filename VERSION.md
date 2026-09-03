@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.43.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.44.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.44.0** - 2026-09-03
+- **Multi-Server Distributed WebSocket Channels & Real-Time Node Diagnostics**:
+  - **Multi-Channel Distributed WebSockets**: Implemented role-based WebSocket connections (`/ws?role=synapse`, `/ws?role=database`, `/ws?role=element`) with automated failover and independent reconnect lifecycles for multi-server clusters.
+  - **Instant Per-Node Diagnostics**: Added live WebSocket diagnostic commands (`check_synapse_api`, `check_database`, `check_element`) measuring real-time latency, Matrix API versions, PostgreSQL stats, and web engine health.
+  - **Config Forms Distributed WS Telemetry**: Added dedicated WebSocket status headers and on-demand check triggers inside Homeserver, Database, and Element Web configuration forms.
+  - **Dashboard Cluster Node WS Badges**: Enhanced cluster node cards with live WebSocket status pills, latency metrics, and 1-click test actions directly on each server node.
 
 #### **v2.43.0** - 2026-09-03
 - **Parallel Distributed Stack Deployment, Connection Profile Auto-Fill & Resilient SSH Handshake**:

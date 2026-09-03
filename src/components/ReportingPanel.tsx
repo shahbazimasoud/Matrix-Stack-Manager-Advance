@@ -1770,7 +1770,7 @@ export default function ReportingPanel({
   };
 
   useEffect(() => {
-    if (activeSubTab === 'backups') {
+    if ((activeSubTab as any) === 'backups') {
       fetchBackupSettings();
     }
   }, [activeSubTab]);
@@ -3781,12 +3781,13 @@ export default function ReportingPanel({
                       }
                     ]).map((sess) => {
                       const isSelf = sess.username === currentUser?.username;
-                      const userObj = panelUsers.find(u => u.username === sess.username) || {
-                        id: sess.userId || sess.id,
+                      const userObj: PanelUser = panelUsers.find(u => u.username === sess.username) || {
+                        id: sess.userId || sess.id || sess.username,
                         username: sess.username,
-                        email: sess.email,
-                        role: sess.role,
-                        avatar: sess.avatar
+                        email: sess.email || '',
+                        role: (sess.role as any) || 'Viewer',
+                        avatar: sess.avatar,
+                        isActive: true
                       };
                       const isSessMenuOpen = activeSessionMenuId === (sess.id || sess.username);
 

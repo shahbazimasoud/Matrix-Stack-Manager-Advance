@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.43.0";
+export const PANEL_VERSION = "2.44.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.44.0",
+    date: "2026-09-03",
+    title: "Multi-Server Distributed WebSocket Channels & Real-Time Node Diagnostics",
+    changes: [
+      "Multi-Channel Distributed WebSockets: Implemented role-based WebSocket connections (/ws?role=synapse, /ws?role=database, /ws?role=element) with automated failover and independent reconnect lifecycles for multi-server clusters.",
+      "Instant Per-Node Diagnostics: Added live WebSocket diagnostic commands (check_synapse_api, check_database, check_element) measuring real-time latency, Matrix API versions, PostgreSQL stats, and web engine health.",
+      "Config Forms Distributed WS Telemetry: Added dedicated WebSocket status headers and on-demand check triggers inside Homeserver, Database, and Element Web configuration forms.",
+      "Dashboard Cluster Node WS Badges: Enhanced cluster node cards with live WebSocket status pills, latency metrics, and 1-click test actions directly on each server node."
+    ]
+  },
   {
     version: "2.43.0",
     date: "2026-09-03",

@@ -645,6 +645,21 @@ export default function App() {
       fetchMatrixUsers();
       fetchLogs();
       fetchConfig();
+
+      // Trigger role-specific WebSocket checks and telemetry in multi-server distributed mode
+      if (synapseWsRef.current && synapseWsRef.current.readyState === WebSocket.OPEN) {
+        synapseWsRef.current.send(JSON.stringify({ type: 'request_node_metrics' }));
+        synapseWsRef.current.send(JSON.stringify({ type: 'check_synapse_api' }));
+      }
+      if (databaseWsRef.current && databaseWsRef.current.readyState === WebSocket.OPEN) {
+        databaseWsRef.current.send(JSON.stringify({ type: 'request_node_metrics' }));
+        databaseWsRef.current.send(JSON.stringify({ type: 'check_database' }));
+      }
+      if (elementWsRef.current && elementWsRef.current.readyState === WebSocket.OPEN) {
+        elementWsRef.current.send(JSON.stringify({ type: 'request_node_metrics' }));
+        elementWsRef.current.send(JSON.stringify({ type: 'check_element' }));
+      }
+
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         setWsConnected(true);
         wsRef.current.send(JSON.stringify({ type: 'request_metrics' }));
@@ -665,7 +680,7 @@ export default function App() {
   // Navigation and terminal/command execution states
   const [activeView, setActiveView] = useState('dashboard');
   const [configInitialTab, setConfigInitialTab] = useState<'homeserver' | 'datetime' | 'network' | 'serverNotices' | 'ldap' | 'workers' | 'policies' | 'smtp' | 'client' | 'wallpaper' | 'backups' | 'video' | 'security' | 'api' | 'certificates' | undefined>(undefined);
-  const [ketesaAdminTab, setKetesaAdminTab] = useState<'users' | 'rooms' | 'media' | 'tokens' | 'installer'>('users');
+  const [ketesaAdminTab, setKetesaAdminTab] = useState<'users' | 'rooms' | 'media' | 'tokens' | 'installer' | 'reports'>('users');
   const [showInstallWizard, setShowInstallWizard] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState<string[]>([
     "System Shell Monitor Initialized. Welcome to Raven Matrix Stack Manager."
@@ -673,10 +688,34 @@ export default function App() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
-  // WebSocket reference & connection state
+  // WebSocket reference & connection states for multi-server architecture
   const wsRef = useRef<WebSocket | null>(null);
+  const synapseWsRef = useRef<WebSocket | null>(null);
+  const databaseWsRef = useRef<WebSocket | null>(null);
+  const elementWsRef = useRef<WebSocket | null>(null);
+
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const wsConnected = connectionStatus === 'connected';
+
+  const [synapseWsStatus, setSynapseWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+  const [databaseWsStatus, setDatabaseWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+  const [elementWsStatus, setElementWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+
+  // Live node API & diagnostic checks via WebSocket
+  const [synapseApiCheck, setSynapseApiCheck] = useState<any>(null);
+  const [databaseCheck, setDatabaseCheck] = useState<any>(null);
+  const [elementCheck, setElementCheck] = useState<any>(null);
+
+  const [isCheckingSynapseApi, setIsCheckingSynapseApi] = useState(false);
+  const [isCheckingDatabase, setIsCheckingDatabase] = useState(false);
+  const [isCheckingElement, setIsCheckingElement] = useState(false);
+
+  const isDistributed = Boolean(
+    activeConnection?.deploymentMode === 'distributed' ||
+    activeConnection?.synapseNode?.host ||
+    activeConnection?.databaseNode?.host ||
+    activeConnection?.elementNode?.host
+  );
 
   const setWsConnected = (connected: boolean) => {
     setConnectionStatus(connected ? 'connected' : 'disconnected');
@@ -810,26 +849,49 @@ export default function App() {
     return () => clearInterval(healthInterval);
   }, [authToken, activeConnection]);
 
-  // Set up WebSocket connection for real-time telemetry and CLI stream
-  const setupWebSocket = (token: string) => {
-    if (!token || token === 'null' || token === 'undefined') return;
-
-    if (wsRef.current) {
-      wsRef.current.onclose = null;
-      wsRef.current.close();
+  // Auto re-setup WebSocket connections when active connection profile changes
+  useEffect(() => {
+    if (authToken && activeConnection) {
+      setupWebSocket(authToken);
     }
+  }, [activeConnection?.id, activeConnection?.deploymentMode]);
 
+  // Set up WebSocket connection(s) for real-time telemetry, CLI stream, and multi-server node channels
+  const createRoleWebSocket = (
+    role: 'synapse' | 'database' | 'element',
+    token: string,
+    connId?: string
+  ): WebSocket => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`;
+    const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}&role=${role}${connId ? `&connId=${encodeURIComponent(connId)}` : ''}`;
     const ws = new WebSocket(wsUrl);
 
+    const updateRoleStatus = (status: 'connecting' | 'connected' | 'disconnected') => {
+      if (role === 'synapse') setSynapseWsStatus(status);
+      if (role === 'database') setDatabaseWsStatus(status);
+      if (role === 'element') setElementWsStatus(status);
+    };
+
+    updateRoleStatus('connecting');
+
     ws.onopen = () => {
-      console.log("WebSocket connection established successfully.");
+      console.log(`WebSocket [${role}] established successfully.`);
+      updateRoleStatus('connected');
       setWsConnected(true);
       window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: true } }));
+
+      // Immediately run live node health and API check on connection
+      if (role === 'synapse') {
+        ws.send(JSON.stringify({ type: 'check_synapse_api' }));
+      } else if (role === 'database') {
+        ws.send(JSON.stringify({ type: 'check_database' }));
+      } else if (role === 'element') {
+        ws.send(JSON.stringify({ type: 'check_element' }));
+      }
     };
 
     ws.onmessage = (event) => {
+      updateRoleStatus('connected');
       setWsConnected(true);
       try {
         const data = JSON.parse(event.data);
@@ -842,69 +904,244 @@ export default function App() {
               return updated ? { ...s, status: updated.status } : s;
             }));
           }
+        } else if (data.type === 'node_metrics') {
+          setStats(prev => {
+            if (!prev) return prev;
+            const existingNodes = prev.clusterNodes || [];
+            const updatedNodes = existingNodes.map(n => 
+              n.role === data.role ? { ...n, ...data.metrics, status: 'online' } : n
+            );
+            return { ...prev, clusterNodes: updatedNodes };
+          });
+        } else if (data.type === 'synapse_api_status') {
+          setSynapseApiCheck(data);
+          setIsCheckingSynapseApi(false);
+        } else if (data.type === 'database_status') {
+          setDatabaseCheck(data);
+          setIsCheckingDatabase(false);
+        } else if (data.type === 'element_status') {
+          setElementCheck(data);
+          setIsCheckingElement(false);
         } else if (data.type === 'cmd_stdout') {
           setTerminalLogs(prev => [...prev, data.text]);
         } else if (data.type === 'cmd_start') {
           setIsExecuting(true);
-          setTerminalLogs(prev => [...prev, `\nroot@matrix-node:~# executing ${data.command}...`]);
+          setTerminalLogs(prev => [...prev, `\n[${role.toUpperCase()}] executing ${data.command}...`]);
         } else if (data.type === 'session_terminated') {
           setIsExecuting(false);
-          showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. جهت امنیت، سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Please log in again.');
+          showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. جهت امنیت، سشن کاربری بسته شد.' : 'Panel update completed! User session closed for security.');
           handleLogout();
-          setTimeout(() => {
-            try {
-              window.location.href = window.location.origin + window.location.pathname;
-            } catch (_) {}
-          }, 1500);
         } else if (data.type === 'cmd_end') {
           setIsExecuting(false);
-          setTerminalLogs(prev => [...prev, `\nCommand executed successfully. Exit code: ${data.code}`]);
-          if (data.isUpdate) {
-            showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Redirecting to login...');
+          setTerminalLogs(prev => [...prev, `\n[${role.toUpperCase()}] Command executed. Exit code: ${data.code}`]);
+          fetchConfig();
+          fetchLogs();
+          fetchBackups();
+        } else if (data.type === 'cmd_err') {
+          setIsExecuting(false);
+          setTerminalLogs(prev => [...prev, `\n❌ [${role.toUpperCase()}] ERROR: ${data.text}`]);
+        } else if (data.type === 'error') {
+          showToast('error', data.message);
+          if (role === 'synapse') setIsCheckingSynapseApi(false);
+          if (role === 'database') setIsCheckingDatabase(false);
+          if (role === 'element') setIsCheckingElement(false);
+        }
+      } catch (err) {
+        console.error(`Error parsing WebSocket message from ${role}:`, err);
+      }
+    };
+
+    ws.onerror = () => {
+      console.warn(`WebSocket [${role}] connection error.`);
+      updateRoleStatus('disconnected');
+    };
+
+    ws.onclose = () => {
+      console.log(`WebSocket [${role}] connection closed. Reconnecting in 5s...`);
+      updateRoleStatus('disconnected');
+      setTimeout(() => {
+        const currentToken = localStorage.getItem('admin_token') || token;
+        if (currentToken && currentToken !== 'null' && currentToken !== 'undefined') {
+          setupWebSocket(currentToken);
+        }
+      }, 5000);
+    };
+
+    return ws;
+  };
+
+  const setupWebSocket = (token: string) => {
+    if (!token || token === 'null' || token === 'undefined') return;
+
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (synapseWsRef.current) {
+      synapseWsRef.current.onclose = null;
+      synapseWsRef.current.close();
+      synapseWsRef.current = null;
+    }
+    if (databaseWsRef.current) {
+      databaseWsRef.current.onclose = null;
+      databaseWsRef.current.close();
+      databaseWsRef.current = null;
+    }
+    if (elementWsRef.current) {
+      elementWsRef.current.onclose = null;
+      elementWsRef.current.close();
+      elementWsRef.current = null;
+    }
+
+    const connId = activeConnection?.id;
+
+    if (isDistributed) {
+      console.log("Initializing Multi-Server distributed WebSockets (Synapse, Database, Element)...");
+      const sWs = createRoleWebSocket('synapse', token, connId);
+      const dWs = createRoleWebSocket('database', token, connId);
+      const eWs = createRoleWebSocket('element', token, connId);
+
+      synapseWsRef.current = sWs;
+      databaseWsRef.current = dWs;
+      elementWsRef.current = eWs;
+      wsRef.current = sWs; // Primary fallback
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}${connId ? `&connId=${encodeURIComponent(connId)}` : ''}`;
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log("WebSocket connection established successfully.");
+        setWsConnected(true);
+        window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: true } }));
+        // Check local synapse API, database, and element on single server
+        ws.send(JSON.stringify({ type: 'check_synapse_api' }));
+        ws.send(JSON.stringify({ type: 'check_database' }));
+        ws.send(JSON.stringify({ type: 'check_element' }));
+      };
+
+      ws.onmessage = (event) => {
+        setWsConnected(true);
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'metrics') {
+            setStats(data.stats);
+            if (data.stats && data.stats.services) {
+              setServices(prev => prev.map(s => {
+                const updated = data.stats.services.find((us: any) => us.id === s.id);
+                return updated ? { ...s, status: updated.status } : s;
+              }));
+            }
+          } else if (data.type === 'synapse_api_status') {
+            setSynapseApiCheck(data);
+            setIsCheckingSynapseApi(false);
+          } else if (data.type === 'database_status') {
+            setDatabaseCheck(data);
+            setIsCheckingDatabase(false);
+          } else if (data.type === 'element_status') {
+            setElementCheck(data);
+            setIsCheckingElement(false);
+          } else if (data.type === 'cmd_stdout') {
+            setTerminalLogs(prev => [...prev, data.text]);
+          } else if (data.type === 'cmd_start') {
+            setIsExecuting(true);
+            setTerminalLogs(prev => [...prev, `\nroot@matrix-node:~# executing ${data.command}...`]);
+          } else if (data.type === 'session_terminated') {
+            setIsExecuting(false);
+            showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. جهت امنیت، سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Please log in again.');
             handleLogout();
             setTimeout(() => {
               try {
                 window.location.href = window.location.origin + window.location.pathname;
               } catch (_) {}
             }, 1500);
-          } else {
-            // Re-sync all configurations
-            fetchConfig();
-            fetchLogs();
-            fetchBackups();
+          } else if (data.type === 'cmd_end') {
+            setIsExecuting(false);
+            setTerminalLogs(prev => [...prev, `\nCommand executed successfully. Exit code: ${data.code}`]);
+            if (data.isUpdate) {
+              showToast('success', isRtl ? 'بروزرسانی پنل با موفقیت انجام شد. سشن کاربری بسته شد و به صفحه لاگین هدایت شدید.' : 'Panel update completed! User session closed for security. Redirecting to login...');
+              handleLogout();
+              setTimeout(() => {
+                try {
+                  window.location.href = window.location.origin + window.location.pathname;
+                } catch (_) {}
+              }, 1500);
+            } else {
+              fetchConfig();
+              fetchLogs();
+              fetchBackups();
+            }
+          } else if (data.type === 'cmd_err') {
+            setIsExecuting(false);
+            setTerminalLogs(prev => [...prev, `\n❌ ERROR: ${data.text}`]);
+          } else if (data.type === 'error') {
+            showToast('error', data.message);
+            setIsCheckingSynapseApi(false);
+            setIsCheckingDatabase(false);
+            setIsCheckingElement(false);
           }
-        } else if (data.type === 'cmd_err') {
-          setIsExecuting(false);
-          setTerminalLogs(prev => [...prev, `\n❌ ERROR: ${data.text}`]);
-        } else if (data.type === 'error') {
-          showToast('error', data.message);
+        } catch (err) {
+          console.error("Error parsing WebSocket message:", err);
         }
-      } catch (err) {
-        console.error("Error parsing WebSocket message:", err);
-      }
-    };
+      };
 
-    ws.onerror = () => {
-      console.warn("WebSocket connection error.");
-      setWsConnected(false);
-      window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
-    };
+      ws.onerror = () => {
+        console.warn("WebSocket connection error.");
+        setWsConnected(false);
+        window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
+      };
 
-    ws.onclose = () => {
-      console.log("WebSocket connection closed. Reconnecting in 5s...");
-      setWsConnected(false);
-      window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
-      setTimeout(() => {
-        const currentToken = localStorage.getItem('admin_token') || token;
-        if (currentToken && currentToken !== 'null' && currentToken !== 'undefined') {
-          if (wsRef.current === ws || !wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
-            setupWebSocket(currentToken);
+      ws.onclose = () => {
+        console.log("WebSocket connection closed. Reconnecting in 5s...");
+        setWsConnected(false);
+        window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: false } }));
+        setTimeout(() => {
+          const currentToken = localStorage.getItem('admin_token') || token;
+          if (currentToken && currentToken !== 'null' && currentToken !== 'undefined') {
+            if (wsRef.current === ws || !wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+              setupWebSocket(currentToken);
+            }
           }
-        }
-      }, 5000);
-    };
+        }, 5000);
+      };
 
-    wsRef.current = ws;
+      wsRef.current = ws;
+    }
+  };
+
+  const checkSynapseApiOverWs = () => {
+    setIsCheckingSynapseApi(true);
+    const target = synapseWsRef.current?.readyState === WebSocket.OPEN ? synapseWsRef.current : wsRef.current;
+    if (target && target.readyState === WebSocket.OPEN) {
+      target.send(JSON.stringify({ type: 'check_synapse_api' }));
+    } else {
+      setIsCheckingSynapseApi(false);
+      showToast('error', isRtl ? 'وب‌سوکت سرور ساینپس متصل نیست' : 'Synapse WebSocket is not connected');
+    }
+  };
+
+  const checkDatabaseOverWs = () => {
+    setIsCheckingDatabase(true);
+    const target = databaseWsRef.current?.readyState === WebSocket.OPEN ? databaseWsRef.current : wsRef.current;
+    if (target && target.readyState === WebSocket.OPEN) {
+      target.send(JSON.stringify({ type: 'check_database' }));
+    } else {
+      setIsCheckingDatabase(false);
+      showToast('error', isRtl ? 'وب‌سوکت سرور دیتابیس متصل نیست' : 'Database WebSocket is not connected');
+    }
+  };
+
+  const checkElementOverWs = () => {
+    setIsCheckingElement(true);
+    const target = elementWsRef.current?.readyState === WebSocket.OPEN ? elementWsRef.current : wsRef.current;
+    if (target && target.readyState === WebSocket.OPEN) {
+      target.send(JSON.stringify({ type: 'check_element' }));
+    } else {
+      setIsCheckingElement(false);
+      showToast('error', isRtl ? 'وب‌سوکت سرور المنت متصل نیست' : 'Element WebSocket is not connected');
+    }
   };
 
   // Fetch functions for panel REST API
@@ -1088,6 +1325,9 @@ export default function App() {
     setAuthToken(null);
     setCurrentUser(null);
     if (wsRef.current) wsRef.current.close();
+    if (synapseWsRef.current) synapseWsRef.current.close();
+    if (databaseWsRef.current) databaseWsRef.current.close();
+    if (elementWsRef.current) elementWsRef.current.close();
     setActiveView('dashboard');
   };
 
@@ -1264,7 +1504,7 @@ export default function App() {
       if (resData && resData.ldap) {
         setLdap(resData.ldap);
       } else if (data && data.ldap) {
-        setLdap(data.ldap);
+        setLdap(prev => ({ ...prev, ...(data.ldap as any) }));
       }
       fetchConfig();
       fetchLogs();
@@ -1505,8 +1745,9 @@ export default function App() {
       setShowInstallWizard(true);
       return;
     }
-    if (!wsRef.current || isExecuting) return;
-    wsRef.current.send(JSON.stringify({ type: 'execute_command', command, args }));
+    const target = synapseWsRef.current?.readyState === WebSocket.OPEN ? synapseWsRef.current : wsRef.current;
+    if (!target || target.readyState !== WebSocket.OPEN || isExecuting) return;
+    target.send(JSON.stringify({ type: 'execute_command', command, args }));
     setActiveView('terminal');
   };
 
@@ -1936,7 +2177,7 @@ export default function App() {
                     }`} />
                     <span>
                       {connectionStatus === 'connected' 
-                        ? (lang === 'fa' ? 'متصل' : (t.connectedBadge || 'Connected')) 
+                        ? (lang === 'fa' ? 'متصل' : ((t as any).connectedBadge || 'Connected')) 
                         : connectionStatus === 'connecting'
                         ? (lang === 'fa' ? 'در حال برقراری ارتباط...' : 'Connecting...')
                         : (lang === 'fa' ? 'قطع ارتباط' : 'Disconnected')
@@ -2660,14 +2901,26 @@ export default function App() {
                                  (lang === 'fa' ? 'سرور المنت وب' : 'Element Node')}
                               </span>
                             </div>
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
-                              node.status === 'online' 
-                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${node.status === 'online' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-                              {node.status === 'online' ? (lang === 'fa' ? 'آنلاین' : 'Online') : (lang === 'fa' ? 'خطا' : 'Unreachable')}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                                (node.role === 'synapse' ? synapseWsStatus === 'connected' :
+                                 node.role === 'database' ? databaseWsStatus === 'connected' :
+                                 elementWsStatus === 'connected')
+                                  ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
+                                  : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                              }`}>
+                                <Activity className="w-2.5 h-2.5" />
+                                <span>WS: {(node.role === 'synapse' ? synapseWsStatus : node.role === 'database' ? databaseWsStatus : elementWsStatus)}</span>
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                                node.status === 'online' 
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                  : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${node.status === 'online' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                                {node.status === 'online' ? (lang === 'fa' ? 'آنلاین' : 'Online') : (lang === 'fa' ? 'خطا' : 'Unreachable')}
+                              </span>
+                            </div>
                           </div>
 
                           <div className="space-y-1">
@@ -2713,6 +2966,36 @@ export default function App() {
                                 </span>
                               </div>
                             )}
+                          </div>
+
+                          <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {node.role === 'synapse' && synapseApiCheck ? (synapseApiCheck.ok ? `Matrix: OK (${synapseApiCheck.latencyMs}ms)` : 'Matrix: Error') :
+                               node.role === 'database' && databaseCheck ? (databaseCheck.ok ? `Postgres: OK (${databaseCheck.latencyMs}ms)` : 'Postgres: Error') :
+                               node.role === 'element' && elementCheck ? (elementCheck.ok ? `Element: OK (${elementCheck.latencyMs}ms)` : 'Element: Error') :
+                               'WS Diagnostic'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (node.role === 'synapse') checkSynapseApiOverWs();
+                                else if (node.role === 'database') checkDatabaseOverWs();
+                                else if (node.role === 'element') checkElementOverWs();
+                              }}
+                              disabled={
+                                (node.role === 'synapse' && isCheckingSynapseApi) ||
+                                (node.role === 'database' && isCheckingDatabase) ||
+                                (node.role === 'element' && isCheckingElement)
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 text-[10px] font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${
+                                ((node.role === 'synapse' && isCheckingSynapseApi) ||
+                                 (node.role === 'database' && isCheckingDatabase) ||
+                                 (node.role === 'element' && isCheckingElement)) ? 'animate-spin' : ''
+                              }`} />
+                              <span>{lang === 'fa' ? 'تست لحظه‌ای' : 'Test Node'}</span>
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -3235,6 +3518,21 @@ export default function App() {
                 onDeleteBackup={handleDeleteBackup}
                 onCreateBackup={handleRefreshBackups}
                 onRefreshBackups={handleRefreshBackups}
+                multiWsStates={{
+                  isDistributed,
+                  synapseConnected: synapseWsStatus === 'connected',
+                  databaseConnected: databaseWsStatus === 'connected',
+                  elementConnected: elementWsStatus === 'connected',
+                  synapseApiCheck,
+                  databaseCheck,
+                  elementCheck,
+                  isCheckingSynapseApi,
+                  isCheckingDatabase,
+                  isCheckingElement,
+                  onCheckSynapseApi: checkSynapseApiOverWs,
+                  onCheckDatabase: checkDatabaseOverWs,
+                  onCheckElement: checkElementOverWs,
+                }}
               />
             )}
 

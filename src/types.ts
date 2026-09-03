@@ -154,6 +154,41 @@ export interface ClusterNodeStats {
   uptime: string;
   services: { id: string; name: string; status: 'active' | 'inactive' | 'error' }[];
   details?: string;
+  ssh?: boolean;
+  service?: boolean;
+  serviceName?: string;
+  error?: string;
+  apiOk?: boolean;
+  dbOk?: boolean;
+  elementOk?: boolean;
+}
+
+export interface NodeWebSocketState {
+  status: 'connecting' | 'connected' | 'disconnected';
+  latencyMs?: number;
+  lastChecked?: string;
+  error?: string;
+}
+
+export interface MultiServerWebSocketStates {
+  synapse: NodeWebSocketState;
+  database: NodeWebSocketState;
+  element: NodeWebSocketState;
+}
+
+export interface NodeApiCheckResult {
+  role: 'synapse' | 'database' | 'element';
+  ok: boolean;
+  serviceName?: string;
+  latencyMs?: number;
+  versions?: string[];
+  adminOk?: boolean;
+  serverVersion?: string;
+  message?: string;
+  error?: string;
+  timestamp?: string;
+  stats?: any;
+  config?: any;
 }
 
 export interface SystemStats {
@@ -221,6 +256,8 @@ export interface RoomMember {
   mxid: string;
   role: 'Creator' | 'Admin' | 'Moderator' | 'Default';
   powerLevel: number;
+  displayName?: string;
+  avatarUrl?: string;
 }
 
 export interface MatrixRoom {
@@ -232,7 +269,9 @@ export interface MatrixRoom {
   topic?: string;
   creator: string;
   membersCount: number;
+  joined_members_count?: number;
   joinedMembers: RoomMember[];
+  bannedMembers?: RoomMember[];
   adGroups?: string[];
   version: string;
   isFederated: boolean;

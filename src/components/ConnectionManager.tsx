@@ -562,7 +562,7 @@ export default function ConnectionManager({
     db: boolean; 
     api?: boolean; 
     error?: string;
-    clusterNodes?: Array<{ role: string; host: string; ssh: boolean; error?: string }>;
+    clusterNodes?: Array<{ role: string; name?: string; host: string; ssh: boolean; service?: boolean; serviceName?: string; error?: string }>;
   } | null>(null);
 
   // Admin Credentials Form State
@@ -878,7 +878,7 @@ export default function ConnectionManager({
     setHost(synNode.host || profile.host || '');
     setPort(synNode.port || profile.port || 22);
     setUsername(synNode.username || profile.username || 'root');
-    setAuthType(synNode.authType || profile.authType || 'password');
+    setAuthType(synNode.authType === 'key' ? 'key' : 'password');
     setPassword(synNode.password || profile.password || '');
     setPrivateKey(synNode.privateKey || profile.privateKey || '');
     setServicePort(synNode.servicePort || 8008);

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -222,6 +222,21 @@ interface ConfigFormsProps {
   lang?: 'fa' | 'en' | 'es' | 'ar' | 'de' | 'ru';
   activeConnectionId?: string;
   initialTab?: TabType;
+  multiWsStates?: {
+    isDistributed?: boolean;
+    synapseConnected: boolean;
+    databaseConnected: boolean;
+    elementConnected: boolean;
+    synapseApiCheck?: any;
+    databaseCheck?: any;
+    elementCheck?: any;
+    isCheckingSynapseApi?: boolean;
+    isCheckingDatabase?: boolean;
+    isCheckingElement?: boolean;
+    onCheckSynapseApi?: () => void;
+    onCheckDatabase?: () => void;
+    onCheckElement?: () => void;
+  };
 }
 
 const configFormTranslations = {
@@ -418,7 +433,8 @@ export default function ConfigForms({
   isLightMode = false,
   lang = 'en',
   activeConnectionId,
-  initialTab
+  initialTab,
+  multiWsStates
 }: ConfigFormsProps) {
   const t = configFormTranslations[lang] || configFormTranslations.en;
   const isRtl = lang === 'fa' || lang === 'ar';
@@ -3516,6 +3532,58 @@ export default function ConfigForms({
               </div>
             </div>
 
+            {multiWsStates?.isDistributed && (
+              <div className="p-4 rounded-2xl bg-purple-950/20 border border-purple-500/30 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 rounded-xl ${multiWsStates.synapseConnected ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                    <Server className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-bold text-white">
+                        {lang === 'fa' ? 'کانکشن وب‌سوکت سرور ساینپس' : 'Synapse Server Node WebSocket'}
+                      </h4>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                        multiWsStates.synapseConnected ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${multiWsStates.synapseConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                        {multiWsStates.synapseConnected ? (lang === 'fa' ? 'متصل' : 'Connected') : (lang === 'fa' ? 'قطع ارتباط' : 'Disconnected')}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {lang === 'fa' ? 'بررسی وضعیت لحظه‌ای و APIهای ماتریکس از طریق وب‌سوکت اختصاصی سرور ساینپس' : 'Dedicated Synapse node WebSocket channel for Matrix API telemetry and diagnostics'}
+                    </p>
+                    {multiWsStates.synapseApiCheck && (
+                      <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-mono">
+                        <span className={`px-2 py-0.5 rounded-md ${multiWsStates.synapseApiCheck.ok ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                          API: {multiWsStates.synapseApiCheck.ok ? 'Online' : 'Failed'} ({multiWsStates.synapseApiCheck.latencyMs}ms)
+                        </span>
+                        {multiWsStates.synapseApiCheck.serverVersion && (
+                          <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-300 border border-white/10">
+                            Version: {multiWsStates.synapseApiCheck.serverVersion}
+                          </span>
+                        )}
+                        {multiWsStates.synapseApiCheck.versions && multiWsStates.synapseApiCheck.versions.length > 0 && (
+                          <span className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                            Matrix Specs: {multiWsStates.synapseApiCheck.versions.slice(-3).join(', ')}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={multiWsStates.onCheckSynapseApi}
+                  disabled={multiWsStates.isCheckingSynapseApi || !multiWsStates.synapseConnected}
+                  className="px-3.5 py-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/30 font-bold text-xs flex items-center gap-2 transition-all self-start sm:self-auto disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${multiWsStates.isCheckingSynapseApi ? 'animate-spin' : ''}`} />
+                  <span>{lang === 'fa' ? 'تست API ساینپس با وب‌سوکت' : 'Check Synapse API via WS'}</span>
+                </button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">{t.hsDomainLabel}</label>
@@ -3584,6 +3652,58 @@ export default function ConfigForms({
                 <Database className="w-5 h-5 text-purple-400" />
                 {t.dbTitle}
               </h3>
+
+              {multiWsStates?.isDistributed && (
+                <div className="p-4 rounded-2xl bg-emerald-950/20 border border-emerald-500/30 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2.5 rounded-xl ${multiWsStates.databaseConnected ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                      <Database className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-white">
+                          {lang === 'fa' ? 'کانکشن وب‌سوکت سرور دیتابیس (PostgreSQL)' : 'Database Server Node WebSocket'}
+                        </h4>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                          multiWsStates.databaseConnected ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${multiWsStates.databaseConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                          {multiWsStates.databaseConnected ? (lang === 'fa' ? 'متصل' : 'Connected') : (lang === 'fa' ? 'قطع ارتباط' : 'Disconnected')}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {lang === 'fa' ? 'بررسی سلامت و آمار پایگاه‌داده از طریق وب‌سوکت اختصاصی سرور دیتابیس' : 'Dedicated Database node WebSocket channel for PostgreSQL health and metrics'}
+                      </p>
+                      {multiWsStates.databaseCheck && (
+                        <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-mono">
+                          <span className={`px-2 py-0.5 rounded-md ${multiWsStates.databaseCheck.ok ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                            DB: {multiWsStates.databaseCheck.ok ? 'Connected' : 'Error'} ({multiWsStates.databaseCheck.latencyMs}ms)
+                          </span>
+                          {multiWsStates.databaseCheck.databaseName && (
+                            <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-300 border border-white/10">
+                              Database: {multiWsStates.databaseCheck.databaseName}
+                            </span>
+                          )}
+                          {multiWsStates.databaseCheck.stats?.activeUsers !== undefined && (
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                              Users: {multiWsStates.databaseCheck.stats.activeUsers} | Rooms: {(multiWsStates.databaseCheck.stats.publicRoomsCount || 0) + (multiWsStates.databaseCheck.stats.privateRoomsCount || 0)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={multiWsStates.onCheckDatabase}
+                    disabled={multiWsStates.isCheckingDatabase || !multiWsStates.databaseConnected}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/30 font-bold text-xs flex items-center gap-2 transition-all self-start sm:self-auto disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${multiWsStates.isCheckingDatabase ? 'animate-spin' : ''}`} />
+                    <span>{lang === 'fa' ? 'تست دیتابیس با وب‌سوکت' : 'Check Database via WS'}</span>
+                  </button>
+                </div>
+              )}
               
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 <div>
@@ -4884,13 +5004,13 @@ export default function ConfigForms({
                 </button>
               </div>
 
-              {workersStatus?.error && (
+              {((workersStatus as any)?.error || (workersStatus?.errors && workersStatus.errors.length > 0)) && (
                 <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex gap-3 text-xs font-sans">
                   <ShieldAlert className="w-5 h-5 shrink-0" />
                   <div>
                     <h5 className="font-bold uppercase tracking-wider mb-1">Server Status Connection Issue</h5>
                     <p className="opacity-90 leading-relaxed">
-                      {workersStatus.message || "Failed to parse system configurations. Please ensure the target machine is accessible and active connection is configured correctly."}
+                      {(workersStatus as any)?.message || workersStatus?.errors?.join(', ') || "Failed to parse system configurations. Please ensure the target machine is accessible and active connection is configured correctly."}
                     </p>
                   </div>
                 </div>
@@ -6857,6 +6977,58 @@ export default function ConfigForms({
                 <p className="text-xs text-slate-400">Configure pre-loaded defaults inside `config.json` parsed by the web client.</p>
               </div>
             </div>
+
+            {multiWsStates?.isDistributed && (
+              <div className="p-4 rounded-2xl bg-sky-950/20 border border-sky-500/30 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 rounded-xl ${multiWsStates.elementConnected ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                    <Layout className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-bold text-white">
+                        {lang === 'fa' ? 'کانکشن وب‌سوکت سرور المنت (Element Web)' : 'Element Web Server Node WebSocket'}
+                      </h4>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                        multiWsStates.elementConnected ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${multiWsStates.elementConnected ? 'bg-sky-400 animate-pulse' : 'bg-rose-400'}`} />
+                        {multiWsStates.elementConnected ? (lang === 'fa' ? 'متصل' : 'Connected') : (lang === 'fa' ? 'قطع ارتباط' : 'Disconnected')}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {lang === 'fa' ? 'بررسی وضعیت وب‌سرور و فایل تنظیمات المنت از طریق وب‌سوکت اختصاصی سرور المنت' : 'Dedicated Element node WebSocket channel for web server and config telemetry'}
+                    </p>
+                    {multiWsStates.elementCheck && (
+                      <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-mono">
+                        <span className={`px-2 py-0.5 rounded-md ${multiWsStates.elementCheck.ok ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                          Web: {multiWsStates.elementCheck.ok ? 'Online' : 'Failed'} ({multiWsStates.elementCheck.latencyMs}ms)
+                        </span>
+                        {multiWsStates.elementCheck.webServerStatus && (
+                          <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-300 border border-white/10">
+                            Engine: {multiWsStates.elementCheck.webServerStatus}
+                          </span>
+                        )}
+                        {multiWsStates.elementCheck.elementVersion && (
+                          <span className="px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                            Version: {multiWsStates.elementCheck.elementVersion}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={multiWsStates.onCheckElement}
+                  disabled={multiWsStates.isCheckingElement || !multiWsStates.elementConnected}
+                  className="px-3.5 py-2 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 border border-sky-500/30 font-bold text-xs flex items-center gap-2 transition-all self-start sm:self-auto disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${multiWsStates.isCheckingElement ? 'animate-spin' : ''}`} />
+                  <span>{lang === 'fa' ? 'تست وب‌المنت با وب‌سوکت' : 'Check Element Web via WS'}</span>
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>

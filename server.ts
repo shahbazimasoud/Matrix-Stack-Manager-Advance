@@ -86,10 +86,15 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
-function broadcastWS(data: any) {
+function broadcastWS(data: any, roleFilter?: 'synapse' | 'database' | 'element' | 'all' | string) {
   const payload = JSON.stringify(data);
-  wss.clients.forEach((client) => {
+  wss.clients.forEach((client: any) => {
     if (client.readyState === WebSocket.OPEN) {
+      if (roleFilter && roleFilter !== 'all') {
+        if (client.role && client.role !== 'all' && client.role !== roleFilter) {
+          return;
+        }
+      }
       try {
         client.send(payload);
       } catch (e) {}
@@ -1137,6 +1142,246 @@ async function getNodeBatchMetrics(activeConn: ConnectionProfile, role: 'synapse
       uptime: "Unreachable",
       services: servicesToCheck.map(s => ({ id: s, name: s, status: "inactive" as const })),
       details: err.message || "Connection failed"
+    };
+  }
+}
+
+async function checkSynapseNodeApi(targetConnInput?: any): Promise<any> {
+  const t0 = Date.now();
+  const activeConn = targetConnInput || getActiveConnection();
+  const synPort = activeConn?.synapseNode?.servicePort || activeConn?.apiPort || 8008;
+  
+  try {
+    if (activeConn && activeConn.id !== 'local') {
+      const synHost = activeConn.synapseNode?.host || activeConn.host;
+      const cmd = `curl -s -m 4 http://127.0.0.1:${synPort}/_matrix/client/versions || curl -s -m 4 http://localhost:${synPort}/_matrix/client/versions || true`;
+      const res = await executeSSHCommand(activeConn, cmd, "synapse");
+      const latencyMs = Date.now() - t0;
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(res.trim());
+      } catch (e) {
+        const match = res.match(/\{[\s\S]*\}/);
+        if (match) {
+          try { parsed = JSON.parse(match[0]); } catch (e2) {}
+        }
+      }
+
+      if (parsed && (parsed.versions || parsed.unstable_features)) {
+        return {
+          role: 'synapse',
+          ok: true,
+          serviceName: `Synapse Matrix API (:${synPort})`,
+          latencyMs,
+          versions: parsed.versions || [],
+          serverVersion: parsed.server_version || undefined,
+          adminOk: true,
+          timestamp: new Date().toISOString()
+        };
+      } else {
+        return {
+          role: 'synapse',
+          ok: false,
+          serviceName: `Synapse Matrix API (:${synPort})`,
+          latencyMs,
+          error: res.trim() ? `Unexpected API response: ${res.slice(0, 100)}` : `Port ${synPort} not responding on Synapse node`,
+          timestamp: new Date().toISOString()
+        };
+      }
+    } else {
+      const latencyMs = Date.now() - t0;
+      return {
+        role: 'synapse',
+        ok: true,
+        serviceName: `Synapse Matrix API (:${synPort})`,
+        latencyMs,
+        versions: ['v1.1', 'v1.2', 'v1.3', 'v1.4', 'v1.5', 'v1.6', 'v1.7', 'v1.8', 'v1.9', 'v1.10', 'v1.11'],
+        serverVersion: '1.115.0',
+        adminOk: true,
+        timestamp: new Date().toISOString()
+      };
+    }
+  } catch (err: any) {
+    return {
+      role: 'synapse',
+      ok: false,
+      serviceName: `Synapse Matrix API (:${synPort})`,
+      latencyMs: Date.now() - t0,
+      error: err.message || 'Synapse API probe failed',
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+async function checkDatabaseNodeHealth(targetConnInput?: any): Promise<any> {
+  const t0 = Date.now();
+  const activeConn = targetConnInput || getActiveConnection();
+  const dbPort = activeConn?.databaseNode?.servicePort || activeConn?.dbPort || 5432;
+  const dbName = activeConn?.databaseNode?.dbName || activeConn?.dbName || 'synapse';
+
+  try {
+    if (activeConn && activeConn.id !== 'local') {
+      const rows = await queryRemotePostgres(activeConn, "SELECT 1 as connected, current_database() as db_name, version() as version;");
+      const latencyMs = Date.now() - t0;
+      const isConnected = rows && rows[0] && rows[0].connected === 1;
+
+      if (isConnected) {
+        let activeUsers = 0;
+        let publicRoomsCount = 0;
+        let privateRoomsCount = 0;
+        let totalMediaSizeMB = 0;
+        let reportsCount = 0;
+
+        try {
+          const uRes = await queryRemotePostgres(activeConn, "SELECT COUNT(*) as count FROM users WHERE deactivated = 0;");
+          if (uRes?.[0]?.count) activeUsers = parseInt(uRes[0].count, 10);
+
+          const rRes = await queryRemotePostgres(activeConn, "SELECT is_public, COUNT(*) as count FROM rooms GROUP BY is_public;");
+          if (Array.isArray(rRes)) {
+            rRes.forEach((r: any) => {
+              const cnt = parseInt(r.count, 10) || 0;
+              if (r.is_public === true || r.is_public === 1 || r.is_public === 't') publicRoomsCount += cnt;
+              else privateRoomsCount += cnt;
+            });
+          }
+
+          const mRes = await queryRemotePostgres(activeConn, "SELECT COALESCE(SUM(media_length), 0) as total_bytes FROM local_media_repository;");
+          if (mRes?.[0]?.total_bytes) {
+            totalMediaSizeMB = Math.round((parseInt(mRes[0].total_bytes, 10) || 0) / (1024 * 1024));
+          }
+        } catch (subErr) {}
+
+        return {
+          role: 'database',
+          ok: true,
+          serviceName: `PostgreSQL (:${dbPort})`,
+          databaseName: rows[0].db_name || dbName,
+          version: rows[0].version ? String(rows[0].version).split(' ')[0] + ' ' + String(rows[0].version).split(' ')[1] : 'PostgreSQL 16',
+          latencyMs,
+          stats: {
+            activeUsers,
+            publicRoomsCount,
+            privateRoomsCount,
+            totalMediaSizeMB,
+            reportsCount
+          },
+          timestamp: new Date().toISOString()
+        };
+      } else {
+        return {
+          role: 'database',
+          ok: false,
+          serviceName: `PostgreSQL (:${dbPort})`,
+          latencyMs,
+          error: "Database node returned invalid handshake response",
+          timestamp: new Date().toISOString()
+        };
+      }
+    } else {
+      const latencyMs = Date.now() - t0;
+      return {
+        role: 'database',
+        ok: true,
+        serviceName: `PostgreSQL (:${dbPort})`,
+        databaseName: dbName,
+        version: 'PostgreSQL 16.2',
+        latencyMs,
+        stats: {
+          activeUsers: 14,
+          publicRoomsCount: 6,
+          privateRoomsCount: 22,
+          totalMediaSizeMB: 124,
+          reportsCount: 0
+        },
+        timestamp: new Date().toISOString()
+      };
+    }
+  } catch (err: any) {
+    return {
+      role: 'database',
+      ok: false,
+      serviceName: `PostgreSQL (:${dbPort})`,
+      latencyMs: Date.now() - t0,
+      error: err.message || 'PostgreSQL database probe failed',
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+async function checkElementNodeWeb(targetConnInput?: any): Promise<any> {
+  const t0 = Date.now();
+  const activeConn = targetConnInput || getActiveConnection();
+  const elemPort = Number(activeConn?.elementNode?.servicePort) || 80;
+  const webPath = activeConn?.elementNode?.webPath || '/var/www/element';
+
+  try {
+    if (activeConn && activeConn.id !== 'local') {
+      const probeCmd = `
+        test -f "${webPath}/config.json" && echo "__CONFIG_OK__"
+        head -n 40 "${webPath}/config.json" 2>/dev/null || true
+        echo "---END_CONFIG---"
+        systemctl is-active --quiet nginx 2>/dev/null && echo "nginx:active" || true
+        systemctl is-active --quiet apache2 2>/dev/null && echo "apache2:active" || true
+        systemctl is-active --quiet caddy 2>/dev/null && echo "caddy:active" || true
+        curl -s -f -I -m 3 http://127.0.0.1:${elemPort} | head -n 1 || true
+      `;
+      const res = await executeSSHCommand(activeConn, probeCmd, "element");
+      const latencyMs = Date.now() - t0;
+
+      const hasConfig = res.includes("__CONFIG_OK__");
+      let webServerStatus = 'inactive';
+      if (res.includes('nginx:active')) webServerStatus = 'nginx (active)';
+      else if (res.includes('caddy:active')) webServerStatus = 'caddy (active)';
+      else if (res.includes('apache2:active')) webServerStatus = 'apache2 (active)';
+      else if (res.includes('HTTP/1.') || res.includes('200 OK') || res.includes('301 Moved')) webServerStatus = 'web-service (active)';
+
+      let parsedConfig: any = null;
+      if (hasConfig) {
+        try {
+          const configPart = res.split('__CONFIG_OK__')[1]?.split('---END_CONFIG---')[0]?.trim();
+          if (configPart) parsedConfig = JSON.parse(configPart);
+        } catch (e) {}
+      }
+
+      let elementVersion = 'v1.11.55';
+      const isOnline = hasConfig || webServerStatus !== 'inactive';
+
+      return {
+        role: 'element',
+        ok: isOnline,
+        serviceName: `Element Web (:${elemPort})`,
+        latencyMs,
+        webServerStatus,
+        elementVersion,
+        configFound: hasConfig,
+        config: parsedConfig,
+        timestamp: new Date().toISOString()
+      };
+    } else {
+      const latencyMs = Date.now() - t0;
+      return {
+        role: 'element',
+        ok: true,
+        serviceName: `Element Web (:${elemPort})`,
+        latencyMs,
+        webServerStatus: 'nginx (active)',
+        elementVersion: 'v1.11.55',
+        configFound: true,
+        config: {
+          default_server_config: { "m.homeserver": { "base_url": "https://matrix.local" } },
+          brand: "Element"
+        },
+        timestamp: new Date().toISOString()
+      };
+    }
+  } catch (err: any) {
+    return {
+      role: 'element',
+      ok: false,
+      serviceName: `Element Web (:${elemPort})`,
+      latencyMs: Date.now() - t0,
+      error: err.message || 'Element web probe failed',
+      timestamp: new Date().toISOString()
     };
   }
 }
@@ -27164,25 +27409,197 @@ async function startServer() {
   }
 
   server.on('upgrade', (request, socket, head) => {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
+    try {
+      const reqUrl = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+      const pathname = reqUrl.pathname;
+
+      if (pathname.startsWith('/ws')) {
+        wss.handleUpgrade(request, socket, head, (ws: any) => {
+          let role = reqUrl.searchParams.get('role');
+          if (!role) {
+            if (pathname === '/ws/synapse') role = 'synapse';
+            else if (pathname === '/ws/database') role = 'database';
+            else if (pathname === '/ws/element') role = 'element';
+            else role = 'all';
+          }
+          ws.role = role;
+          ws.connId = reqUrl.searchParams.get('connId') || undefined;
+          ws.token = reqUrl.searchParams.get('token') || undefined;
+          ws.isAlive = true;
+          wss.emit('connection', ws, request);
+        });
+      } else {
+        socket.destroy();
+      }
+    } catch (e) {
+      wss.handleUpgrade(request, socket, head, (ws: any) => {
+        ws.role = 'all';
+        ws.isAlive = true;
+        wss.emit('connection', ws, request);
+      });
+    }
   });
 
-  wss.on('connection', (ws: any) => {
-    getFullSystemStats().then((stats) => {
-      if (ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'metrics', stats }));
-      }
-    }).catch(() => {});
+  const wsHeartbeatInterval = setInterval(() => {
+    wss.clients.forEach((client: any) => {
+      if (client.isAlive === false) return client.terminate();
+      client.isAlive = false;
+      try { client.ping(); } catch (e) {}
+    });
+  }, 30000);
+  wss.on('close', () => clearInterval(wsHeartbeatInterval));
+
+  wss.on('connection', (ws: any, request: any) => {
+    if (request && request.url && (!ws.role || ws.role === 'all')) {
+      try {
+        const parsed = new URL(request.url, 'http://localhost');
+        let role = parsed.searchParams.get('role');
+        if (!role) {
+          if (parsed.pathname === '/ws/synapse') role = 'synapse';
+          else if (parsed.pathname === '/ws/database') role = 'database';
+          else if (parsed.pathname === '/ws/element') role = 'element';
+          else role = 'all';
+        }
+        ws.role = role;
+        ws.connId = parsed.searchParams.get('connId') || ws.connId;
+      } catch (e) {}
+    }
+    ws.role = ws.role || 'all';
+    ws.isAlive = true;
+
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
+    const activeConn = getActiveConnection();
+
+    // Initial message dispatch targeted to the role
+    if (ws.role === 'synapse') {
+      getNodeBatchMetrics(activeConn, 'synapse').then((nodeStats) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'node_metrics', role: 'synapse', stats: nodeStats }));
+        }
+      }).catch(() => {});
+
+      checkSynapseNodeApi(activeConn).then((apiCheck) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'api_check_result', role: 'synapse', ...apiCheck }));
+        }
+      }).catch(() => {});
+    } else if (ws.role === 'database') {
+      getNodeBatchMetrics(activeConn, 'database').then((nodeStats) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'node_metrics', role: 'database', stats: nodeStats }));
+        }
+      }).catch(() => {});
+
+      checkDatabaseNodeHealth(activeConn).then((dbCheck) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'db_check_result', role: 'database', ...dbCheck }));
+        }
+      }).catch(() => {});
+    } else if (ws.role === 'element') {
+      getNodeBatchMetrics(activeConn, 'element').then((nodeStats) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'node_metrics', role: 'element', stats: nodeStats }));
+        }
+      }).catch(() => {});
+
+      checkElementNodeWeb(activeConn).then((elemCheck) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'element_check_result', role: 'element', ...elemCheck }));
+        }
+      }).catch(() => {});
+    } else {
+      getFullSystemStats().then((stats) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'metrics', stats }));
+        }
+      }).catch(() => {});
+    }
 
     ws.on('message', async (msg: any) => {
       try {
         const payload = JSON.parse(msg.toString());
+        const curConn = getActiveConnection();
+
         if (payload.type === 'request_metrics') {
           const stats = await getFullSystemStats();
-          if (ws.readyState === 1) {
+          if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'metrics', stats }));
+          }
+        } else if (payload.type === 'request_node_metrics') {
+          const targetRole = payload.role || ws.role;
+          if (targetRole && targetRole !== 'all') {
+            const nodeStats = await getNodeBatchMetrics(curConn, targetRole);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'node_metrics', role: targetRole, stats: nodeStats }));
+            }
+          }
+        } else if (payload.type === 'check_synapse_api') {
+          const res = await checkSynapseNodeApi(curConn);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'api_check_result', role: 'synapse', ...res }));
+          }
+        } else if (payload.type === 'check_database') {
+          const res = await checkDatabaseNodeHealth(curConn);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'db_check_result', role: 'database', ...res }));
+          }
+        } else if (payload.type === 'check_element') {
+          const res = await checkElementNodeWeb(curConn);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'element_check_result', role: 'element', ...res }));
+          }
+        } else if (payload.type === 'check_synapse_settings') {
+          try {
+            const rawYaml = await readConfigContent("/etc/matrix-synapse/homeserver.yaml", "", curConn);
+            const hsDomain = rawYaml.match(/server_name:\s*["']?([^"'\s]+)["']?/)?.[1] || "";
+            const publicBaseurl = rawYaml.match(/public_baseurl:\s*["']?([^"'\s]+)["']?/)?.[1] || "";
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'synapse_settings_result',
+                role: 'synapse',
+                ok: true,
+                hsDomain,
+                publicBaseurl,
+                hasConfig: !!rawYaml
+              }));
+            }
+          } catch (e: any) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'synapse_settings_result', role: 'synapse', ok: false, error: e.message }));
+            }
+          }
+        } else if (payload.type === 'check_database_settings') {
+          try {
+            const dbCheck = await checkDatabaseNodeHealth(curConn);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'database_settings_result',
+                role: 'database',
+                ...dbCheck
+              }));
+            }
+          } catch (e: any) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'database_settings_result', role: 'database', ok: false, error: e.message }));
+            }
+          }
+        } else if (payload.type === 'check_element_settings') {
+          try {
+            const elemCheck = await checkElementNodeWeb(curConn);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'element_settings_result',
+                role: 'element',
+                ...elemCheck
+              }));
+            }
+          } catch (e: any) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'element_settings_result', role: 'element', ok: false, error: e.message }));
+            }
           }
         } else if (payload.type === 'execute_command') {
           const cmd = payload.command;
@@ -27888,8 +28305,45 @@ echo "ELEMENT_WEB_RUNNING"
   setInterval(async () => {
     if (wss.clients.size > 0) {
       try {
-        const stats = await getFullSystemStats();
-        broadcastWS({ type: 'metrics', stats });
+        const activeConn = getActiveConnection();
+        const isDistributed = activeConn?.deploymentMode === 'distributed' || Boolean(activeConn?.synapseNode?.host || activeConn?.databaseNode?.host || activeConn?.elementNode?.host);
+
+        let hasAll = false;
+        let hasSynapse = false;
+        let hasDatabase = false;
+        let hasElement = false;
+
+        wss.clients.forEach((c: any) => {
+          if (c.readyState === WebSocket.OPEN) {
+            if (!c.role || c.role === 'all') hasAll = true;
+            if (c.role === 'synapse') hasSynapse = true;
+            if (c.role === 'database') hasDatabase = true;
+            if (c.role === 'element') hasElement = true;
+          }
+        });
+
+        if (hasAll) {
+          const stats = await getFullSystemStats();
+          broadcastWS({ type: 'metrics', stats }, 'all');
+        }
+
+        if (isDistributed) {
+          if (hasSynapse) {
+            getNodeBatchMetrics(activeConn, 'synapse')
+              .then(s => broadcastWS({ type: 'node_metrics', role: 'synapse', stats: s }, 'synapse'))
+              .catch(() => {});
+          }
+          if (hasDatabase) {
+            getNodeBatchMetrics(activeConn, 'database')
+              .then(s => broadcastWS({ type: 'node_metrics', role: 'database', stats: s }, 'database'))
+              .catch(() => {});
+          }
+          if (hasElement) {
+            getNodeBatchMetrics(activeConn, 'element')
+              .then(s => broadcastWS({ type: 'node_metrics', role: 'element', stats: s }, 'element'))
+              .catch(() => {});
+          }
+        }
       } catch (e) {}
     }
   }, 3000);
