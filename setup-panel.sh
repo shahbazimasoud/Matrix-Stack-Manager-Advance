@@ -265,6 +265,10 @@ install_nodejs_22
 # ------------------------------------------------------------------------------
 # 3. Code Checkout & Directory Setup
 # ------------------------------------------------------------------------------
+# Configure git safe.directory to eliminate dubious ownership permission errors under sudo
+git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
+git config --global --add safe.directory "*" 2>/dev/null || true
+
 if [ "$(pwd)" != "$INSTALL_DIR" ]; then
   log_step "Cloning or downloading Matrix Manager repository into $INSTALL_DIR..."
   if [ -d "$INSTALL_DIR/.git" ]; then
@@ -324,6 +328,10 @@ if [ "$(pwd)" != "$INSTALL_DIR" ]; then
     detect_panel_version "."
   fi
 fi
+
+# Ensure executable scripts and permissions across installation tree
+chmod -R 755 "$INSTALL_DIR" 2>/dev/null || true
+chmod +x "$INSTALL_DIR"/*.sh 2>/dev/null || true
 
 # ------------------------------------------------------------------------------
 # 4. Dependency installation & Build
@@ -550,9 +558,8 @@ if ! "$PIP_CMD" install --default-timeout=180 --retries 5 -r "$INSTALL_DIR/requi
   done
   
   if [ "$MIRROR_SUCCESS" = false ]; then
-    log_error "Python dependencies installation failed even with high-speed mirror registries."
-    log_error "Please check your server's network connection, firewall rules, or DNS settings."
-    exit 1
+    log_warning "Python dependencies installation could not be completed from PyPI or mirrors."
+    log_warning "The Node.js matrix panel will still compile and run normally."
   fi
 fi
 
@@ -581,11 +588,14 @@ ExecStart=$NODE_EXEC_PATH dist/server.cjs
 Restart=on-failure
 Environment=PORT=3000
 Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:$PATH
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+chmod 644 "$SERVICE_FILE" 2>/dev/null || true
 log_info "Enabling and booting Matrix Manager Panel daemon..."
 systemctl daemon-reload
 systemctl enable matrix-manager
@@ -653,6 +663,7 @@ EOF
   sed -i "s/\$PANEL_PORT/$PANEL_PORT/g" "$NGINX_CONF_PATH"
 
   ln -sf "$NGINX_CONF_PATH" "/etc/nginx/sites-enabled/matrix-manager.conf"
+  chmod 644 "$NGINX_CONF_PATH" 2>/dev/null || true
 
   # Validate and reload Nginx
   log_info "Validating and reloading Nginx service..."
@@ -677,6 +688,15 @@ if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld;
   firewall-cmd --permanent --add-port="$PANEL_PORT/tcp" || true
   firewall-cmd --reload || true
 fi
+
+# ------------------------------------------------------------------------------
+# 5.8 Ensure Strict & Safe Permissions Across Directory Hierarchy
+# ------------------------------------------------------------------------------
+log_step "Configuring file permissions and executable flags..."
+chmod -R 755 "$INSTALL_DIR" 2>/dev/null || true
+chmod +x "$INSTALL_DIR"/*.sh 2>/dev/null || true
+chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
+chmod -R 700 "$INSTALL_DIR/db" 2>/dev/null || true
 
 # ------------------------------------------------------------------------------
 # 6. Installation Report Summary

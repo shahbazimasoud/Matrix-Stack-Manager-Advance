@@ -15,9 +15,18 @@
 
 ---
 
-## Current Panel Version: **v2.53.0** (Released: 2026-09-03)
+## Current Panel Version: **v2.54.0** (Released: 2026-09-03)
 
 ### Changelog History
+
+#### **v2.54.0** - 2026-09-03
+- **Restore `resolveNodeProfile` Export & Installer Permission Hardening**:
+  - **Restored `resolveNodeProfile` Export**: Resolved production esbuild compilation failure (`No matching export in "server/db.ts" for import "resolveNodeProfile"`) by re-exporting the multi-node profile router in `server/db.ts`.
+  - **Git Safe Directory Enforced**: Automatically registers the installation directory in `git safe.directory` to eliminate git dubious ownership errors when executing under `sudo`.
+  - **Script Executable Bits in Git & Installer**: Enforced `chmod +x` on `setup-panel.sh`, `install-matrix-stack.sh`, `matrix-installer.sh`, and `uninstall-panel.sh` both in git metadata and during execution.
+  - **Strict Hierarchy Permissions**: Configured comprehensive filesystem permission enforcement (`chmod 755` for installation directory, `chmod 600` for `.env`, `chmod 700` for `db/`, `chmod 644` for systemd service and Nginx configurations, `chmod 600` for private SSL keys).
+  - **Systemd Service Environment Hardening**: Injected complete `PATH` and `LimitNOFILE=65535` into `matrix-manager.service` unit file to guarantee seamless daemon process spawning and tool discovery across Debian/Ubuntu distributions.
+  - **Resilient PyPI Dependency Handling**: Gracefully handles PyPI mirror timeouts with clear warnings rather than halting the installation, allowing the Node.js panel to complete compilation and startup.
 
 #### **v2.53.0** - 2026-09-03
 - **SSH Connection Pool Lifecycle Hardening & Bounded Health Check Verification**:

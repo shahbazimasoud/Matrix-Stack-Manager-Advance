@@ -817,6 +817,81 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
   }
 }
 
+export function resolveNodeProfile(
+  config: ConnectionProfile,
+  targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig
+): ConnectionProfile {
+  if (!config) return config;
+  if (typeof targetNode === 'object' && targetNode !== null) {
+    return {
+      ...config,
+      id: `${config.id || "custom"}_custom_node`,
+      host: targetNode.host,
+      port: targetNode.port || 22,
+      username: targetNode.username || 'root',
+      password: targetNode.password,
+      privateKey: targetNode.privateKey,
+      authType: targetNode.authType || 'password',
+      dbHost: targetNode.dbHost || config.dbHost,
+      dbPort: targetNode.dbPort || config.dbPort,
+      dbName: targetNode.dbName || config.dbName,
+      dbUser: targetNode.dbUser || config.dbUser,
+      dbPass: targetNode.dbPass || config.dbPass,
+    };
+  }
+
+  if (config.deploymentMode === 'distributed') {
+    if (targetNode === 'database' && config.databaseNode && config.databaseNode.host) {
+      return {
+        ...config,
+        id: `${config.id}_db_node`,
+        host: config.databaseNode.host,
+        port: config.databaseNode.port || 22,
+        username: config.databaseNode.username || 'root',
+        password: config.databaseNode.password,
+        privateKey: config.databaseNode.privateKey,
+        authType: config.databaseNode.authType || 'password',
+        dbHost: config.databaseNode.dbHost || '127.0.0.1',
+        dbPort: config.databaseNode.dbPort || 5432,
+        dbName: config.databaseNode.dbName || 'synapse',
+        dbUser: config.databaseNode.dbUser || 'synapse_user',
+        dbPass: config.databaseNode.dbPass !== undefined ? config.databaseNode.dbPass : config.dbPass,
+      };
+    }
+    if (targetNode === 'element' && config.elementNode && config.elementNode.host) {
+      return {
+        ...config,
+        id: `${config.id}_element_node`,
+        host: config.elementNode.host,
+        port: config.elementNode.port || 22,
+        username: config.elementNode.username || 'root',
+        password: config.elementNode.password,
+        privateKey: config.elementNode.privateKey,
+        authType: config.elementNode.authType || 'password',
+        elementConfigPath: config.elementNode.elementConfigPath || config.elementConfigPath,
+      };
+    }
+    if ((targetNode === 'synapse' || targetNode === 'default' || !targetNode) && config.synapseNode && config.synapseNode.host) {
+      return {
+        ...config,
+        id: `${config.id}_synapse_node`,
+        host: config.synapseNode.host,
+        port: config.synapseNode.port || 22,
+        username: config.synapseNode.username || 'root',
+        password: config.synapseNode.password,
+        privateKey: config.synapseNode.privateKey,
+        authType: config.synapseNode.authType || 'password',
+        adminUsername: config.synapseNode.adminUsername || config.adminUsername,
+        adminPassword: config.synapseNode.adminPassword || config.adminPassword,
+        adminAccessToken: config.synapseNode.adminAccessToken || config.adminAccessToken,
+        homeserverYamlPath: config.synapseNode.homeserverYamlPath || config.homeserverYamlPath,
+      };
+    }
+  }
+
+  return config;
+}
+
 export async function executeSSHCommand(
   config: ConnectionProfile,
   cmd: string,

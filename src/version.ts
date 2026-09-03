@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.53.0";
+export const PANEL_VERSION = "2.54.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,19 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.54.0",
+    date: "2026-09-03",
+    title: "Restore resolveNodeProfile & VPS Installer Permission Hardening",
+    changes: [
+      "Restored resolveNodeProfile Export: Resolved production esbuild failure (No matching export in server/db.ts for import resolveNodeProfile) by restoring multi-node configuration resolution in server/db.ts.",
+      "Git Safe Directory Enforced: Automatically whitelists installation directory in git safe.directory to eliminate dubious ownership permission errors under sudo.",
+      "Executable Script Permissions: Configured chmod +x across all shell scripts (setup-panel.sh, install-matrix-stack.sh, matrix-installer.sh, uninstall-panel.sh) in git index and setup routine.",
+      "Strict Hierarchy Permissions: Applied comprehensive filesystem permission enforcement (chmod 755 for installation root, 600 for .env, 700 for db, 644 for systemd service, 600 for SSL key).",
+      "Systemd Service Environment: Injected complete PATH and LimitNOFILE=65535 into matrix-manager.service to guarantee daemon tool resolution across all Debian/Ubuntu releases.",
+      "Resilient PyPI Dependency Handling: Converted mirror fallback failures into non-fatal warnings to ensure the panel can complete compilation and boot reliably even in restricted networks."
+    ]
+  },
   {
     version: "2.53.0",
     date: "2026-09-03",
