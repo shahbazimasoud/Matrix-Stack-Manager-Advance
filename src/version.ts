@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.47.0";
+export const PANEL_VERSION = "2.48.0";
 export const PANEL_BUILD_DATE = "2026-09-03";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,18 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.48.0",
+    date: "2026-09-03",
+    title: "SSH Connection Pool Optimization, Nginx Default Purge & Element 403 Forbidden Fix",
+    changes: [
+      "SSH Connection Pooling & Socket Minimization: Unified SSH pool cache key by host:port:username so all parallel and sequential tasks to the same node share a single multiplexed channel, eliminating excessive SSH sessions seen in 'w' command output.",
+      "Local Host Direct Execution: When a node is identified as local, commands execute directly via child process streams without opening redundant SSH loopback connections.",
+      "Aggressive Idle SSH Eviction: Automatically closes unused SSH connections after 60 seconds of inactivity and flushes connection pools cleanly upon cluster deployment completion.",
+      "Nginx Default Site Purge: Automatically unlinks and removes /etc/nginx/sites-enabled/default on Synapse and Element nodes so custom Matrix virtual hosts serve traffic exclusively, resolving the 'Welcome to nginx!' collision.",
+      "Element Web 403 Forbidden Fix: Enforces strict www-data ownership and 755 directory permissions on /var/www/element, incorporates fallback client index generation, and configures default_server blocks."
+    ]
+  },
   {
     version: "2.47.0",
     date: "2026-09-03",

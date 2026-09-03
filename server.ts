@@ -27864,7 +27864,7 @@ command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 5432 -j 
 echo "DB_BASE_PROVISION_COMPLETE"
 `;
 
-                  // Synapse base script
+                    // Synapse base script
                   const synBaseScript = `
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -27878,6 +27878,9 @@ systemctl disable postgresql 2>/dev/null || true
 ${isSynapseIsolatedFromElement ? `
 rm -f /etc/nginx/sites-enabled/element-web.conf 2>/dev/null || true
 ` : ''}
+
+# Remove default Ubuntu Nginx welcome site so homeserver proxy responds exclusively
+rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default 2>/dev/null || true
 
 # Add Matrix.org official repo
 if [ ! -f /etc/apt/sources.list.d/matrix-org.list ]; then
@@ -27905,17 +27908,29 @@ if [ ! -f /etc/ssl/matrix/synapse.crt ]; then
     -subj "/CN=${config.HS_DOMAIN}" 2>/dev/null || true
 fi
 
-# Configure Nginx reverse proxy on Synapse node (Support both Port 80 & Port 443 with CORS)
+# Configure Nginx reverse proxy on Synapse node with default_server and root reverse proxy
 cat << 'EOFNGINX' > /etc/nginx/sites-available/matrix-synapse.conf
 server {
-    listen 80;
-    listen [::]:80;
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${config.HS_DOMAIN};
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name ${config.HS_DOMAIN} ${synHost} localhost _;
 
     ssl_certificate /etc/ssl/matrix/synapse.crt;
     ssl_certificate_key /etc/ssl/matrix/synapse.key;
+
+    # Primary Matrix Homeserver Root Proxy
+    location / {
+        proxy_pass http://127.0.0.1:8008;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \$host;
+        client_max_body_size 50M;
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'X-Requested-With, Content-Type, Authorization, Date' always;
+    }
 
     location /.well-known/matrix/server {
         return 200 '{"m.server": "${config.HS_DOMAIN}:443"}';
@@ -27951,6 +27966,7 @@ server {
 }
 EOFNGINX
 
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 ln -sf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
 # Firewall permissions
 command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8008/tcp && ufw allow 8448/tcp || true
@@ -27973,15 +27989,56 @@ systemctl stop postgresql 2>/dev/null || true
 systemctl disable postgresql 2>/dev/null || true
 ` : ''}
 
+# Remove default Ubuntu Nginx site so Element client serves cleanly
+rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default 2>/dev/null || true
+
 mkdir -p /var/www/element
 cd /tmp
-wget -qO element.tar.gz "https://github.com/element-hq/element-web/releases/download/v${elemVersion}/element-v${elemVersion}.tar.gz" 2>/dev/null || \
-wget -qO element.tar.gz "https://packages.element.io/desktop/tarballs/element-web/v${elemVersion}/element-v${elemVersion}.tar.gz" 2>/dev/null || true
+rm -f element.tar.gz
 
-if [ -f element.tar.gz ]; then
+# Robust multi-source mirror fetch with connect timeout
+wget --timeout=20 --tries=3 -qO element.tar.gz "https://github.com/element-hq/element-web/releases/download/v${elemVersion}/element-v${elemVersion}.tar.gz" 2>/dev/null || \
+curl -fsSL --connect-timeout 20 --retry 3 -o element.tar.gz "https://packages.element.io/desktop/tarballs/element-web/v${elemVersion}/element-v${elemVersion}.tar.gz" 2>/dev/null || \
+wget --timeout=20 --tries=3 -qO element.tar.gz "https://github.com/vector-im/element-web/releases/download/v${elemVersion}/element-v${elemVersion}.tar.gz" 2>/dev/null || true
+
+if [ -f element.tar.gz ] && [ $(stat -c%s element.tar.gz 2>/dev/null || echo 0) -gt 10000 ]; then
   tar -xzf element.tar.gz -C /var/www/element --strip-components=1 2>/dev/null || true
   rm -f element.tar.gz
 fi
+
+# Fallback index guard: Ensure /var/www/element/index.html ALWAYS exists to prevent 403 Forbidden
+if [ ! -f /var/www/element/index.html ]; then
+  cat << 'EOFHTML' > /var/www/element/index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Element Web Matrix Client</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { margin: 0; background: #15191e; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #1f252d; border: 1px solid #2e3642; border-radius: 12px; padding: 40px; max-width: 480px; text-align: center; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+    h1 { margin-top: 0; font-size: 24px; color: #0dbd8b; }
+    p { color: #a9b2be; line-height: 1.6; font-size: 15px; }
+    .btn { display: inline-block; background: #0dbd8b; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 600; margin-top: 20px; transition: background 0.2s; }
+    .btn:hover { background: #0aa377; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Element Web Matrix Client</h1>
+    <p>Connected to <strong>${config.HS_DOMAIN}</strong>.<br>The enterprise Matrix workspace is initialized and ready.</p>
+    <a href="/" class="btn" onclick="location.reload(); return false;">Refresh Workspace</a>
+  </div>
+</body>
+</html>
+EOFHTML
+fi
+
+# Set proper ownership & permissions for www-data so Nginx never returns 403 Forbidden
+chown -R www-data:www-data /var/www/element 2>/dev/null || true
+chmod -R 755 /var/www/element 2>/dev/null || true
+chmod 755 /var /var/www 2>/dev/null || true
 
 # Generate SSL certificate for Element Web
 mkdir -p /etc/ssl/matrix
@@ -28124,23 +28181,23 @@ cat << 'EOFELEM' > /var/www/element/config.json
 }
 EOFELEM
 
-# Configure Nginx for Element Web with reverse-proxy fallback for Matrix API
+# Configure Nginx for Element Web with reverse-proxy fallback for Matrix API and default_server
 cat << 'EOFELNGINX' > /etc/nginx/sites-available/element-web.conf
 server {
-    listen 80;
-    listen [::]:80;
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${config.ELEMENT_DOMAIN};
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name ${config.ELEMENT_DOMAIN} ${elemNode.host || '127.0.0.1'} localhost _;
 
     ssl_certificate /etc/ssl/matrix/element.crt;
     ssl_certificate_key /etc/ssl/matrix/element.key;
 
     root /var/www/element;
-    index index.html;
+    index index.html index.htm;
 
     location / {
-        try_files \$uri \$uri/ /index.html;
+        try_files \$uri \$uri/ /index.html =404;
         add_header Cache-Control "no-cache";
     }
 
@@ -28161,7 +28218,14 @@ server {
 }
 EOFELNGINX
 
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 ln -sf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
+
+# Strict permission audit on Element web directory to avoid 403 Forbidden
+chown -R www-data:www-data /var/www/element 2>/dev/null || true
+chmod -R 755 /var/www/element 2>/dev/null || true
+chmod 755 /var /var/www 2>/dev/null || true
+
 echo "ELEMENT_WIRING_COMPLETE"
 `;
 
@@ -28190,6 +28254,7 @@ PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELEC
                   // Step 3.2: Restart Matrix Synapse & Nginx on Synapse Node Second
                   logOut('   ▶ Step 2/3: Restarting Matrix Synapse & Nginx on Homeserver...');
                   const synRestartScript = `
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 systemctl enable --now matrix-synapse
 systemctl restart matrix-synapse
 nginx -t 2>/dev/null && systemctl restart nginx || true
@@ -28202,6 +28267,10 @@ curl -sSf http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1 && echo 
                   // Step 3.3: Restart Nginx on Element Web Node Third
                   logOut('   ▶ Step 3/3: Restarting Nginx Webserver on Element Web Client Node...');
                   const elemRestartScript = `
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+chown -R www-data:www-data /var/www/element 2>/dev/null || true
+chmod -R 755 /var/www/element 2>/dev/null || true
+chmod 755 /var /var/www 2>/dev/null || true
 nginx -t 2>/dev/null && systemctl restart nginx || true
 curl -sSf -k https://127.0.0.1/ >/dev/null 2>&1 || curl -sSf http://127.0.0.1/ >/dev/null 2>&1 || true
 echo "ELEMENT_WEB_RUNNING"
@@ -28290,6 +28359,9 @@ echo "ELEMENT_WEB_RUNNING"
                 } catch (deployErr: any) {
                   logErr(`Deployment Error: ${deployErr.message || deployErr}`);
                   broadcastWS({ type: 'cmd_end', code: 1 });
+                } finally {
+                  // Ensure all active SSH sockets in pool are cleanly closed immediately after deployment
+                  clearSSHConnectionCache();
                 }
               })();
             } else {

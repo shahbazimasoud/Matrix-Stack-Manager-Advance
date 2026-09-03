@@ -6,6 +6,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { exec, spawn } from "child_process";
 import { Client } from "pg";
 import { Client as SSHClient } from "ssh2";
 
@@ -634,7 +635,10 @@ export function isLocalHostAddress(host?: string): boolean {
 }
 
 function getSSHKey(config: ConnectionProfile): string {
-  return `${config.id || "node"}_${config.host}_${config.port || 22}_${config.username || "root"}`;
+  const host = (config.host || "127.0.0.1").trim().toLowerCase();
+  const port = Number(config.port) || 22;
+  const username = (config.username || "root").trim();
+  return `${host}:${port}:${username}`;
 }
 
 async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClient> {
@@ -859,6 +863,20 @@ export async function executeSSHCommand(
   targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig
 ): Promise<string> {
   const targetConfig = resolveNodeProfile(config, targetNode);
+
+  // If host is local machine, execute directly to avoid SSH socket overhead & w-command noise
+  if (isLocalHostAddress(targetConfig.host)) {
+    return new Promise((resolve, reject) => {
+      exec(cmd, { maxBuffer: 1024 * 1024 * 20 }, (err, stdout, stderr) => {
+        if (err) {
+          const errMsg = (stderr || stdout || err.message).trim();
+          return reject(new Error(errMsg || `Local command failed with exit code ${err.code}`));
+        }
+        resolve(stdout);
+      });
+    });
+  }
+
   const attemptExecute = async (isRetry = false): Promise<string> => {
     let conn: SSHClient;
     try {
@@ -916,6 +934,18 @@ export async function executeStreamingSSHCommand(
   onErr?: (data: string) => void
 ): Promise<number> {
   const targetConfig = resolveNodeProfile(config, targetNode);
+
+  // If host is local machine, stream via local child process
+  if (isLocalHostAddress(targetConfig.host)) {
+    return new Promise((resolve, reject) => {
+      const proc = spawn('bash', ['-c', cmd]);
+      proc.stdout?.on('data', d => { if (onData) onData(d.toString()); });
+      proc.stderr?.on('data', d => { if (onErr) onErr(d.toString()); });
+      proc.on('close', code => resolve(code || 0));
+      proc.on('error', err => reject(err));
+    });
+  }
+
   const attemptExecute = async (isRetry = false): Promise<number> => {
     let conn: SSHClient;
     try {
@@ -1022,18 +1052,18 @@ export async function uploadSSHFile(
   return attemptUpload(false);
 }
 
-// Cleanup idle SSH connections every 2 minutes
+// Cleanup idle SSH connections every 30 seconds (evict if unused for > 60 seconds)
 setInterval(() => {
   const now = Date.now();
   for (const [key, cached] of sshPool.entries()) {
-    if (cached.lastUsed && now - cached.lastUsed > 5 * 60 * 1000) {
+    if (cached.lastUsed && now - cached.lastUsed > 60 * 1000) {
       try {
         if (cached.conn) cached.conn.end();
       } catch (e) {}
       sshPool.delete(key);
     }
   }
-}, 2 * 60 * 1000);
+}, 30 * 1000);
 
 export function interpolateQueryParams(queryStr: string, params: any[]): string {
   if (!params || params.length === 0) return queryStr;
