@@ -44,7 +44,9 @@ import {
   resolveNodeProfile,
   cleanAndParseJSON,
   clearSSHConnectionCache,
-  isLocalHostAddress
+  isLocalHostAddress,
+  getSSHConnectionStats,
+  safelyCloseSSHClient
 } from "./server/db";
 
 import {
@@ -84,6 +86,7 @@ interface LDAPConfig {
 }
 
 const app = express();
+let isDeploymentRunning = false;
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
@@ -109,7 +112,7 @@ const SANDBOX_DIR = path.join(process.cwd(), "sandbox");
 
 async function readConfigContent(filePath: string, defaultContent: string = "", targetConnInput?: any): Promise<string> {
   const activeConn = targetConnInput || getActiveConnection();
-  if (activeConn && activeConn.id !== "local") {
+  if (activeConn && activeConn.id !== "local" && !isDeploymentRunning) {
     let targetPath = filePath;
     if (filePath === "/etc/matrix-stack.conf" && activeConn.configPath) {
       targetPath = activeConn.configPath;
@@ -27659,6 +27662,7 @@ async function startServer() {
             if (config.deploymentMode === 'distributed') {
               (async () => {
                 try {
+                  isDeploymentRunning = true;
                   // Clear cached SSH connections so fresh handshakes start cleanly
                   clearSSHConnectionCache();
 
@@ -27752,7 +27756,8 @@ async function startServer() {
                     profile: ConnectionProfile,
                     script: string,
                     tag: string,
-                    desc: string
+                    desc: string,
+                    timeoutMs: number = 90000
                   ): Promise<void> => {
                     const lineOut = (txt: string) => {
                       for (const l of txt.split('\n')) {
@@ -27772,17 +27777,35 @@ async function startServer() {
                         logOut(`> [${tag}] Executing script directly on local host (${desc})...`);
                       }
                       await new Promise<void>((resolve, reject) => {
-                        const proc = exec(script);
+                        const proc = exec(script, { maxBuffer: 1024 * 1024 * 50 });
+                        let timer: NodeJS.Timeout | null = null;
+                        if (timeoutMs > 0) {
+                          timer = setTimeout(() => {
+                            proc.kill('SIGKILL');
+                            reject(new Error(`[${tag}] Direct local execution timed out after ${Math.round(timeoutMs / 1000)}s`));
+                          }, timeoutMs);
+                        }
                         proc.stdout?.on('data', d => lineOut(d.toString()));
                         proc.stderr?.on('data', d => lineErr(d.toString()));
-                        proc.on('close', code => code === 0 ? resolve() : reject(new Error(`[${tag}] execution failed with code ${code}`)));
+                        proc.on('close', code => {
+                          if (timer) clearTimeout(timer);
+                          code === 0 ? resolve() : reject(new Error(`[${tag}] execution failed with code ${code}`));
+                        });
+                        proc.on('error', err => {
+                          if (timer) clearTimeout(timer);
+                          reject(err);
+                        });
                       });
                     };
 
                     if (isRemote) {
                       try {
-                        logOut(`> [${tag}] Connecting via SSH (${profile.username || 'root'}@${profile.host}:${profile.port || 22})...`);
-                        await executeStreamingSSHCommand(profile, script, undefined, lineOut, lineErr);
+                        const stats = getSSHConnectionStats();
+                        logOut(`> [${tag}] Connecting via SSH (${profile.username || 'root'}@${profile.host}:${profile.port || 22})... [Active SSH: ${stats.activeCount}, Pool: ${stats.poolSize}]`);
+                        const exitCode = await executeStreamingSSHCommand(profile, script, undefined, lineOut, lineErr, timeoutMs);
+                        if (exitCode !== 0) {
+                          throw new Error(`[${tag}] Script execution failed with exit code ${exitCode}`);
+                        }
                       } catch (sshErr: any) {
                         if (isLocalHostAddress(profile.host)) {
                           logOut(`⚠️ [${tag}] SSH connection to ${profile.host} failed (${sshErr.message}), but this host is a local interface on this server. Auto-recovering via direct local execution...`);
@@ -27790,6 +27813,9 @@ async function startServer() {
                         } else {
                           throw sshErr;
                         }
+                      } finally {
+                        const stats = getSSHConnectionStats();
+                        logOut(`> [${tag}] Completed task. Pool status: ${stats.activeCount} active connections.`);
                       }
                     } else {
                       await executeDirectLocal();
@@ -28540,6 +28566,8 @@ echo "ELEMENT_WIRING_COMPLETE"
                   // -------------------------------------------------------------
                   logOut('');
                   logOut('🔄 [STAGE 3/3: COORDINATED SEQUENTIAL RESTARTS] Restarting services in strict dependency sequence...');
+                  const initialAudit = getSSHConnectionStats();
+                  logOut(`>>> [SSH Connection Audit] Active SSH sessions: ${initialAudit.activeCount} (Total spawned: ${initialAudit.totalCreated})`);
 
                   // Step 3.1: Verify PostgreSQL Node First (Non-disruptive, preserve active Synapse connections)
                   logOut('   ▶ Step 1/3: Verifying PostgreSQL on Database Server (zero-downtime connection check)...');
@@ -28553,7 +28581,7 @@ else
 fi
 PGPASSWORD='${dbPass}' psql -h 127.0.0.1 -U '${dbUser}' -d '${dbName}' -c 'SELECT 1;' 2>/dev/null && echo "POSTGRESQL_AUTH_VERIFIED_SUCCESS" || echo "POSTGRESQL_RELOAD_SUCCESS"
 `;
-                  await runNodeTask(isDbRemote, dbConnProfile, pgRestartScript, 'Database Node', dbNode.host || '127.0.0.1');
+                  await runNodeTask(isDbRemote, dbConnProfile, pgRestartScript, 'Database Node', dbNode.host || '127.0.0.1', 60000);
                   logOut('   ✅ Step 1/3 Complete: PostgreSQL is active and accepting queries without dropping connections.');
 
                   // Step 3.2: Restart Matrix Synapse & Nginx on Synapse Node Second
@@ -28587,11 +28615,6 @@ fi
 SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
 [ ! -f "$SYN_PYTHON" ] && SYN_PYTHON="$(which python3)"
 
-# Verify configuration integrity before starting
-echo "Verifying Synapse configuration integrity..."
-SYN_PYTHON="/opt/venvs/matrix-synapse/bin/python"
-[ ! -f "$SYN_PYTHON" ] && SYN_PYTHON="$(which python3)"
-
 # Check keys
 sudo -u matrix-synapse "$SYN_PYTHON" -m synapse.app.homeserver \
   --config-path=/etc/matrix-synapse/homeserver.yaml \
@@ -28604,39 +28627,85 @@ systemctl enable matrix-synapse 2>/dev/null || true
 systemctl start matrix-synapse 2>&1 || true
 
 nginx -t 2>/dev/null && systemctl restart nginx || true
-
-# Wait up to 45 seconds for Synapse port 8008 to become ready and serve API requests
-SYN_READY=0
-for i in $(seq 1 45); do
-  if curl -sSf http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1; then
-    SYN_READY=1
-    echo "SYNAPSE_API_HEALTHY: Port 8008 is active and serving /_matrix/client/versions"
-    break
-  fi
-  sleep 1
-done
-
-if [ "$SYN_READY" -eq 1 ]; then
-  # Also verify that Nginx reverse proxy responds properly (not 502)
-  NGINX_TEST=$(curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1/_matrix/client/versions 2>/dev/null || curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/_matrix/client/versions 2>/dev/null || echo "000")
-  echo ">>> Nginx Reverse Proxy HTTP Status: $NGINX_TEST"
-  if [ "$NGINX_TEST" = "200" ]; then
-    echo ">>> [OK] Nginx reverse proxy verified (HTTP 200) - No 502 Bad Gateway!"
-  else
-    echo ">>> [NOTE] Nginx returned HTTP $NGINX_TEST (Synapse backend is active on 8008)"
-  fi
-else
-  echo ">>> [ERROR] Synapse failed to respond on port 8008 after 45s. Diagnostic details:"
-  systemctl status matrix-synapse --no-pager 2>&1 | head -n 35 || true
-  echo "--- Systemd Journal ---"
-  journalctl -u matrix-synapse.service -n 50 --no-pager 2>&1 || true
-  echo "--- Synapse Homeserver Log ---"
-  tail -n 50 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
-  exit 1
-fi
+echo "SYNAPSE_SERVICE_START_DISPATCHED"
 `;
-                  await runNodeTask(isSynRemote, synConnProfile, synRestartScript, 'Synapse Node', synHost);
-                  logOut('   ✅ Step 2/3 Complete: Matrix Synapse Homeserver & Reverse Proxy are active.');
+                  await runNodeTask(isSynRemote, synConnProfile, synRestartScript, 'Synapse Node', synHost, 60000);
+                  logOut('   ▶ Service start signal dispatched. Initiating bounded health verification probe loop...');
+
+                  // Step 3.2.B: Bounded Health Check Loop with Exponential Backoff & Connection Safety
+                  const maxRetries = 10;
+                  const totalTimeoutMs = 60000;
+                  const startTime = Date.now();
+                  let synHealthy = false;
+                  let nginxStatus = '000';
+
+                  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                    const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+                    if (Date.now() - startTime > totalTimeoutMs) {
+                      logOut(`   ⚠️ [Synapse Health Check] Global timeout (${totalTimeoutMs / 1000}s) reached after ${elapsedSec}s.`);
+                      break;
+                    }
+
+                    // Exponential backoff: 2s, 2.4s, 2.9s, 3.5s... capped at 8s
+                    const backoffMs = Math.min(8000, Math.round(2000 * Math.pow(1.2, attempt - 1)));
+                    logOut(`   ▶ [Synapse Health Check] Probe ${attempt}/${maxRetries} (${elapsedSec}s elapsed, next probe in ${backoffMs / 1000}s)... [Active SSH: ${getSSHConnectionStats().activeCount}]`);
+                    await new Promise(r => setTimeout(r, backoffMs));
+
+                    try {
+                      // Probe using the pooled single connection to Synapse node
+                      const probeCmd = `
+                        SYN_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://127.0.0.1:8008/_matrix/client/versions 2>/dev/null || echo "000")
+                        NGINX_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" -m 3 https://127.0.0.1/_matrix/client/versions 2>/dev/null || curl -s -o /dev/null -w "%{http_code}" -m 3 http://127.0.0.1/_matrix/client/versions 2>/dev/null || echo "000")
+                        echo "SYN:${SYN_CODE}|NGINX:${NGINX_CODE}"
+                      `.trim();
+
+                      let probeResult = '';
+                      if (isSynRemote) {
+                        probeResult = await executeSSHCommand(synConnProfile, probeCmd, undefined, 10000);
+                      } else {
+                        probeResult = await new Promise<string>((res, rej) => {
+                          exec(probeCmd, { timeout: 10000 }, (e, out) => e ? rej(e) : res(out));
+                        });
+                      }
+
+                      const match = probeResult.match(/SYN:([0-9]{3})\|NGINX:([0-9]{3})/);
+                      const synCode = match ? match[1] : '000';
+                      nginxStatus = match ? match[2] : '000';
+
+                      if (synCode === '200') {
+                        synHealthy = true;
+                        logOut(`   ✅ [Synapse API Healthy] Port 8008 responded with HTTP 200 (Nginx Reverse Proxy: HTTP ${nginxStatus}).`);
+                        break;
+                      } else {
+                        logOut(`   ⏳ [Synapse Starting] Port 8008 returned HTTP ${synCode}, Nginx returned HTTP ${nginxStatus}. Waiting for daemon warmup...`);
+                      }
+                    } catch (probeErr: any) {
+                      logOut(`   ⏳ [Synapse Probe Waiting] Probe attempt ${attempt} returned: ${probeErr.message || 'Connecting...'}`);
+                    }
+                  }
+
+                  if (!synHealthy) {
+                    logErr(`>>> [ERROR] Synapse failed to respond on port 8008 within ${totalTimeoutMs / 1000}s (${maxRetries} retry attempts). Collecting diagnostics...`);
+                    try {
+                      const diagCmd = `
+                        echo "=== SYSTEMCTL STATUS ==="
+                        systemctl status matrix-synapse --no-pager 2>&1 | head -n 35 || true
+                        echo "=== JOURNALCTL LOGS ==="
+                        journalctl -u matrix-synapse.service -n 40 --no-pager 2>&1 || true
+                        echo "=== HOMESERVER LOG ==="
+                        tail -n 40 /var/log/matrix-synapse/homeserver.log 2>/dev/null || true
+                      `;
+                      const diagOutput = isSynRemote
+                        ? await executeSSHCommand(synConnProfile, diagCmd, undefined, 15000).catch(() => 'Diagnostics failed to retrieve.')
+                        : await new Promise<string>((res) => exec(diagCmd, { timeout: 15000 }, (_, out) => res(out || '')));
+                      for (const l of diagOutput.split('\n')) {
+                        if (l.trim()) logErr(`   ${l}`);
+                      }
+                    } catch (_) {}
+                    throw new Error(`Synapse failed to become healthy on port 8008 after ${maxRetries} retries (${totalTimeoutMs / 1000}s limit). Deployment halted to protect cluster.`);
+                  }
+
+                  logOut('   ✅ Step 2/3 Complete: Matrix Synapse Homeserver & Reverse Proxy are fully healthy and active.');
 
                   // Step 3.3: Restart Nginx on Element Web Node Third
                   logOut('   ▶ Step 3/3: Restarting Nginx Webserver on Element Web Client Node...');
@@ -28650,10 +28719,9 @@ chmod -R 755 /var/www/element 2>/dev/null || true
 chmod 755 /var /var/www 2>/dev/null || true
 
 nginx -t 2>/dev/null && systemctl restart nginx || true
-curl -sSf -k https://127.0.0.1/ >/dev/null 2>&1 || curl -sSf http://127.0.0.1/ >/dev/null 2>&1 || true
-echo "ELEMENT_WEB_RUNNING"
+echo "ELEMENT_WEB_RESTART_SUCCESS"
 `;
-                  await runNodeTask(isElemRemote, elemConnProfile, elemRestartScript, 'Element Web Node', elemNode.host || '127.0.0.1');
+                  await runNodeTask(isElemRemote, elemConnProfile, elemRestartScript, 'Element Web Node', elemNode.host || '127.0.0.1', 60000);
                   logOut('   ✅ Step 3/3 Complete: Element Web frontend is active and serving chat client.');
 
                   // --- Auto-Save / Update Connection Profile in Panel DB ---
@@ -28738,8 +28806,10 @@ echo "ELEMENT_WEB_RUNNING"
                   logErr(`Deployment Error: ${deployErr.message || deployErr}`);
                   broadcastWS({ type: 'cmd_end', code: 1 });
                 } finally {
-                  // Ensure all active SSH sockets in pool are cleanly closed immediately after deployment
+                  isDeploymentRunning = false;
+                  logOut(`>>> [SSH Connection Audit] Finalizing deployment session cleanup...`);
                   clearSSHConnectionCache();
+                  logOut(`>>> [SSH Connection Audit] All deployment SSH sessions safely terminated. Remaining active: ${getSSHConnectionStats().activeCount}`);
                 }
               })();
             } else {

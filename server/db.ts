@@ -598,18 +598,50 @@ interface CachedSSH {
 }
 
 const sshPool = new Map<string, CachedSSH>();
+let totalSSHConnectionsOpened = 0;
+let activeSSHConnectionsCount = 0;
+
+export function getSSHConnectionStats() {
+  return {
+    totalCreated: totalSSHConnectionsOpened,
+    activeCount: activeSSHConnectionsCount,
+    poolSize: sshPool.size,
+    cachedKeys: Array.from(sshPool.keys())
+  };
+}
+
+export function safelyCloseSSHClient(key: string, conn?: SSHClient | null, reason = 'cleanup'): void {
+  const cached = sshPool.get(key);
+  const targetConn = conn || cached?.conn;
+  if (cached) {
+    sshPool.delete(key);
+  }
+  if (targetConn) {
+    try {
+      targetConn.removeAllListeners();
+      targetConn.end();
+      // Enforce immediate termination if socket still lingering
+      setTimeout(() => {
+        try {
+          (targetConn as any).destroy?.();
+        } catch (_) {}
+      }, 500);
+    } catch (_) {}
+    activeSSHConnectionsCount = Math.max(0, activeSSHConnectionsCount - 1);
+    console.log(`[SSH Manager] Disconnected SSH session for [${key}] (${reason}). Active sessions: ${activeSSHConnectionsCount}`);
+  }
+}
 
 export function clearSSHConnectionCache(target?: string): void {
   if (target) {
     for (const [key, cached] of Array.from(sshPool.entries())) {
       if (key.includes(target) || key.startsWith(`${target}_`)) {
-        try { cached.conn?.end(); } catch {}
-        sshPool.delete(key);
+        safelyCloseSSHClient(key, cached.conn, `target_clear:${target}`);
       }
     }
   } else {
-    for (const [, cached] of Array.from(sshPool.entries())) {
-      try { cached.conn?.end(); } catch {}
+    for (const [key, cached] of Array.from(sshPool.entries())) {
+      safelyCloseSSHClient(key, cached.conn, 'pool_clear_all');
     }
     sshPool.clear();
   }
@@ -660,7 +692,10 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
 
     conn.on("ready", () => {
       isHandshakeDone = true;
+      totalSSHConnectionsOpened++;
+      activeSSHConnectionsCount++;
       sshPool.set(key, { conn, isReady: true, lastUsed: Date.now() });
+      console.log(`[SSH Manager] Established NEW SSH connection to [${key}]. Active sessions: ${activeSSHConnectionsCount} (Total spawned: ${totalSSHConnectionsOpened})`);
       resolve(conn);
     });
 
@@ -677,11 +712,11 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
     });
 
     conn.on("error", (err: any) => {
-      sshPool.delete(key);
+      safelyCloseSSHClient(key, conn, `socket_error:${err?.message || err}`);
       if (!isHandshakeDone) {
         const msg = err?.message || String(err);
         if (msg.includes("Timed out while waiting for handshake") || msg.includes("timed out")) {
-          reject(new Error(`Timed out while waiting for SSH handshake on ${config.host}:${config.port || 22} (60s limit). Please check host reachability, firewall on port ${config.port || 22}, and remote sshd responsiveness.`));
+          reject(new Error(`Timed out while waiting for SSH handshake on ${config.host}:${config.port || 22} (30s limit). Please check host reachability, firewall on port ${config.port || 22}, and remote sshd responsiveness.`));
         } else {
           reject(err);
         }
@@ -689,20 +724,20 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
     });
 
     conn.on("close", () => {
-      sshPool.delete(key);
+      safelyCloseSSHClient(key, conn, 'remote_closed');
     });
 
     conn.on("end", () => {
-      sshPool.delete(key);
+      safelyCloseSSHClient(key, conn, 'remote_ended');
     });
 
     const connOpts: any = {
       host: config.host,
       port: Number(config.port) || 22,
       username: config.username || "root",
-      readyTimeout: 60000,
+      readyTimeout: 30000,
       keepaliveInterval: 10000,
-      keepaliveCountMax: 30,
+      keepaliveCountMax: 3,
       tryKeyboard: true,
       algorithms: {
         kex: [
@@ -766,7 +801,7 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
     try {
       conn.connect(connOpts);
     } catch (e) {
-      sshPool.delete(key);
+      safelyCloseSSHClient(key, conn, 'connect_call_failed');
       reject(e);
     }
   });
@@ -777,97 +812,23 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
     const client = await connectPromise;
     return client;
   } catch (err) {
-    sshPool.delete(key);
+    safelyCloseSSHClient(key, null, 'connect_promise_rejected');
     throw err;
   }
-}
-
-export function resolveNodeProfile(
-  config: ConnectionProfile,
-  targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig
-): ConnectionProfile {
-  if (!config) return config;
-  if (typeof targetNode === 'object' && targetNode !== null) {
-    return {
-      ...config,
-      id: `${config.id || "custom"}_custom_node`,
-      host: targetNode.host,
-      port: targetNode.port || 22,
-      username: targetNode.username || 'root',
-      password: targetNode.password,
-      privateKey: targetNode.privateKey,
-      authType: targetNode.authType || 'password',
-      dbHost: targetNode.dbHost || config.dbHost,
-      dbPort: targetNode.dbPort || config.dbPort,
-      dbName: targetNode.dbName || config.dbName,
-      dbUser: targetNode.dbUser || config.dbUser,
-      dbPass: targetNode.dbPass || config.dbPass,
-    };
-  }
-
-  if (config.deploymentMode === 'distributed') {
-    if (targetNode === 'database' && config.databaseNode && config.databaseNode.host) {
-      return {
-        ...config,
-        id: `${config.id}_db_node`,
-        host: config.databaseNode.host,
-        port: config.databaseNode.port || config.port || 22,
-        username: config.databaseNode.username || config.username || 'root',
-        password: (config.databaseNode.password !== undefined && config.databaseNode.password !== '') ? config.databaseNode.password : config.password,
-        privateKey: (config.databaseNode.privateKey !== undefined && config.databaseNode.privateKey !== '') ? config.databaseNode.privateKey : config.privateKey,
-        authType: config.databaseNode.authType || config.authType || 'password',
-        dbHost: config.databaseNode.dbHost || '127.0.0.1',
-        dbPort: config.databaseNode.dbPort || 5432,
-        dbName: config.databaseNode.dbName || 'synapse',
-        dbUser: config.databaseNode.dbUser || 'synapse_user',
-        dbPass: config.databaseNode.dbPass !== undefined ? config.databaseNode.dbPass : config.dbPass,
-      };
-    }
-    if (targetNode === 'element' && config.elementNode && config.elementNode.host) {
-      return {
-        ...config,
-        id: `${config.id}_element_node`,
-        host: config.elementNode.host,
-        port: config.elementNode.port || config.port || 22,
-        username: config.elementNode.username || config.username || 'root',
-        password: (config.elementNode.password !== undefined && config.elementNode.password !== '') ? config.elementNode.password : config.password,
-        privateKey: (config.elementNode.privateKey !== undefined && config.elementNode.privateKey !== '') ? config.elementNode.privateKey : config.privateKey,
-        authType: config.elementNode.authType || config.authType || 'password',
-        elementConfigPath: config.elementNode.elementConfigPath || config.elementConfigPath,
-      };
-    }
-    if ((targetNode === 'synapse' || targetNode === 'default' || !targetNode) && config.synapseNode && config.synapseNode.host) {
-      return {
-        ...config,
-        id: `${config.id}_synapse_node`,
-        host: config.synapseNode.host,
-        port: config.synapseNode.port || config.port || 22,
-        username: config.synapseNode.username || config.username || 'root',
-        password: (config.synapseNode.password !== undefined && config.synapseNode.password !== '') ? config.synapseNode.password : config.password,
-        privateKey: (config.synapseNode.privateKey !== undefined && config.synapseNode.privateKey !== '') ? config.synapseNode.privateKey : config.privateKey,
-        authType: config.synapseNode.authType || config.authType || 'password',
-        adminUsername: config.synapseNode.adminUsername || config.adminUsername,
-        adminPassword: config.synapseNode.adminPassword || config.adminPassword,
-        adminAccessToken: config.synapseNode.adminAccessToken || config.adminAccessToken,
-        homeserverYamlPath: config.synapseNode.homeserverYamlPath || config.homeserverYamlPath,
-      };
-    }
-  }
-
-  return config;
 }
 
 export async function executeSSHCommand(
   config: ConnectionProfile,
   cmd: string,
-  targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig
+  targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig,
+  timeoutMs: number = 45000
 ): Promise<string> {
   const targetConfig = resolveNodeProfile(config, targetNode);
 
   // If host is local machine, execute directly to avoid SSH socket overhead & w-command noise
   if (isLocalHostAddress(targetConfig.host)) {
     return new Promise((resolve, reject) => {
-      exec(cmd, { maxBuffer: 1024 * 1024 * 20 }, (err, stdout, stderr) => {
+      exec(cmd, { maxBuffer: 1024 * 1024 * 20, timeout: timeoutMs }, (err, stdout, stderr) => {
         if (err) {
           const errMsg = (stderr || stdout || err.message).trim();
           return reject(new Error(errMsg || `Local command failed with exit code ${err.code}`));
@@ -879,11 +840,12 @@ export async function executeSSHCommand(
 
   const attemptExecute = async (isRetry = false): Promise<string> => {
     let conn: SSHClient;
+    const sshKey = getSSHKey(targetConfig);
     try {
       conn = await getOrCreateSSHClient(targetConfig);
     } catch (err: any) {
       if (!isRetry) {
-        sshPool.delete(getSSHKey(targetConfig));
+        safelyCloseSSHClient(sshKey, null, 'retry_before_connect');
         conn = await getOrCreateSSHClient(targetConfig);
       } else {
         throw err;
@@ -891,9 +853,23 @@ export async function executeSSHCommand(
     }
 
     return new Promise((resolve, reject) => {
+      let resolved = false;
+      let timer: NodeJS.Timeout | null = null;
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            safelyCloseSSHClient(sshKey, conn, `cmd_timeout_${timeoutMs}ms`);
+            reject(new Error(`SSH command timed out after ${Math.round(timeoutMs / 1000)}s`));
+          }
+        }, timeoutMs);
+      }
+
       conn.exec(cmd, async (err, stream) => {
         if (err) {
-          sshPool.delete(getSSHKey(targetConfig));
+          if (timer) clearTimeout(timer);
+          safelyCloseSSHClient(sshKey, conn, 'exec_dispatch_err');
           if (!isRetry) {
             try {
               const retryRes = await attemptExecute(true);
@@ -908,16 +884,29 @@ export async function executeSSHCommand(
         let stderr = "";
 
         stream.on("close", (code) => {
-          if (code !== 0 && code !== null) {
-            const errMsg = (stderr || stdout || "").trim();
-            reject(new Error(errMsg || `Command failed with exit code ${code}`));
-          } else {
-            resolve(stdout);
+          if (timer) clearTimeout(timer);
+          if (!resolved) {
+            resolved = true;
+            if (code !== 0 && code !== null) {
+              const errMsg = (stderr || stdout || "").trim();
+              reject(new Error(errMsg || `Command failed with exit code ${code}`));
+            } else {
+              resolve(stdout);
+            }
           }
         }).on("data", (data: any) => {
           stdout += data.toString();
         }).stderr.on("data", (data: any) => {
           stderr += data.toString();
+        });
+
+        stream.on("error", (streamErr: any) => {
+          if (timer) clearTimeout(timer);
+          if (!resolved) {
+            resolved = true;
+            safelyCloseSSHClient(sshKey, conn, 'stream_error');
+            reject(streamErr);
+          }
         });
       });
     });
@@ -931,58 +920,93 @@ export async function executeStreamingSSHCommand(
   cmd: string,
   targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig,
   onData?: (data: string) => void,
-  onErr?: (data: string) => void
+  onErr?: (data: string) => void,
+  timeoutMs: number = 90000
 ): Promise<number> {
   const targetConfig = resolveNodeProfile(config, targetNode);
 
-  // If host is local machine, stream via local child process
   if (isLocalHostAddress(targetConfig.host)) {
     return new Promise((resolve, reject) => {
       const proc = spawn('bash', ['-c', cmd]);
+      let timer: NodeJS.Timeout | null = null;
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          proc.kill('SIGKILL');
+          reject(new Error(`Local streaming command timed out after ${Math.round(timeoutMs / 1000)}s`));
+        }, timeoutMs);
+      }
       proc.stdout?.on('data', d => { if (onData) onData(d.toString()); });
       proc.stderr?.on('data', d => { if (onErr) onErr(d.toString()); });
-      proc.on('close', code => resolve(code || 0));
-      proc.on('error', err => reject(err));
+      proc.on('close', code => {
+        if (timer) clearTimeout(timer);
+        resolve(code || 0);
+      });
+      proc.on('error', err => {
+        if (timer) clearTimeout(timer);
+        reject(err);
+      });
     });
   }
 
   const attemptExecute = async (isRetry = false): Promise<number> => {
     let conn: SSHClient;
+    const sshKey = getSSHKey(targetConfig);
     try {
       conn = await getOrCreateSSHClient(targetConfig);
     } catch (err: any) {
       if (!isRetry) {
-        sshPool.delete(getSSHKey(targetConfig));
+        safelyCloseSSHClient(sshKey, null, 'streaming_retry_connect');
         conn = await getOrCreateSSHClient(targetConfig);
       } else {
         throw err;
       }
     }
+
     return new Promise((resolve, reject) => {
       let resolved = false;
+      let timer: NodeJS.Timeout | null = null;
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            safelyCloseSSHClient(sshKey, conn, `streaming_timeout_${timeoutMs}ms`);
+            reject(new Error(`Remote SSH command timed out after ${Math.round(timeoutMs / 1000)}s`));
+          }
+        }, timeoutMs);
+      }
+
       conn.exec(cmd, (err, stream) => {
         if (err) {
-          sshPool.delete(getSSHKey(targetConfig));
+          if (timer) clearTimeout(timer);
+          safelyCloseSSHClient(sshKey, conn, 'streaming_exec_err');
           if (!isRetry) {
             return attemptExecute(true).then(resolve).catch(reject);
           }
           return reject(err);
         }
+
         stream.on('close', (code: number) => {
+          if (timer) clearTimeout(timer);
           if (!resolved) {
             resolved = true;
             resolve(code || 0);
           }
         });
+
         stream.on('error', (streamErr: any) => {
+          if (timer) clearTimeout(timer);
           if (!resolved) {
             resolved = true;
+            safelyCloseSSHClient(sshKey, conn, 'streaming_stream_error');
             reject(streamErr);
           }
         });
+
         stream.on('data', (d: any) => {
           if (onData) onData(d.toString());
         });
+
         stream.stderr.on('data', (d: any) => {
           if (onErr) onErr(d.toString());
           else if (onData) onData(d.toString());
@@ -990,6 +1014,7 @@ export async function executeStreamingSSHCommand(
       });
     });
   };
+
   return attemptExecute(false);
 }
 
@@ -1003,11 +1028,12 @@ export async function uploadSSHFile(
   const targetConfig = resolveNodeProfile(config, targetNode);
   const attemptUpload = async (isRetry = false): Promise<void> => {
     let conn: SSHClient;
+    const sshKey = getSSHKey(targetConfig);
     try {
       conn = await getOrCreateSSHClient(targetConfig);
     } catch (err: any) {
       if (!isRetry) {
-        sshPool.delete(getSSHKey(targetConfig));
+        safelyCloseSSHClient(sshKey, null, 'sftp_connect_retry');
         conn = await getOrCreateSSHClient(targetConfig);
       } else {
         throw err;
@@ -1017,7 +1043,7 @@ export async function uploadSSHFile(
     return new Promise((resolve, reject) => {
       conn.sftp((errSftp, sftp) => {
         if (errSftp) {
-          sshPool.delete(getSSHKey(targetConfig));
+          safelyCloseSSHClient(sshKey, conn, 'sftp_session_err');
           if (!isRetry) {
             return attemptUpload(true).then(resolve).catch(reject);
           }
@@ -1030,7 +1056,7 @@ export async function uploadSSHFile(
               const fileBuf = fs.readFileSync(localFilePath);
               sftp.writeFile(remoteFilePath, fileBuf, { mode: 0o644 }, (errWrite) => {
                 if (errWrite) {
-                  sshPool.delete(getSSHKey(targetConfig));
+                  safelyCloseSSHClient(sshKey, conn, 'sftp_write_err');
                   if (!isRetry) {
                     return attemptUpload(true).then(resolve).catch(reject);
                   }
@@ -1039,6 +1065,7 @@ export async function uploadSSHFile(
                 resolve();
               });
             } catch (fsErr) {
+              safelyCloseSSHClient(sshKey, conn, 'sftp_readfile_err');
               reject(fsErr);
             }
           } else {
@@ -1052,18 +1079,16 @@ export async function uploadSSHFile(
   return attemptUpload(false);
 }
 
-// Cleanup idle SSH connections every 30 seconds (evict if unused for > 60 seconds)
+// Cleanup idle SSH connections every 15 seconds (evict if unused for > 30 seconds)
 setInterval(() => {
   const now = Date.now();
-  for (const [key, cached] of sshPool.entries()) {
-    if (cached.lastUsed && now - cached.lastUsed > 60 * 1000) {
-      try {
-        if (cached.conn) cached.conn.end();
-      } catch (e) {}
-      sshPool.delete(key);
+  for (const [key, cached] of Array.from(sshPool.entries())) {
+    if (cached.lastUsed && now - cached.lastUsed > 30 * 1000) {
+      safelyCloseSSHClient(key, cached.conn, 'idle_timeout_30s');
     }
   }
-}, 30 * 1000);
+}, 15 * 1000);
+
 
 export function interpolateQueryParams(queryStr: string, params: any[]): string {
   if (!params || params.length === 0) return queryStr;
