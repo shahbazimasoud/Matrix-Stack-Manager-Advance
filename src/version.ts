@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.56.0";
+export const PANEL_VERSION = "2.56.1";
 export const PANEL_BUILD_DATE = "2026-09-05";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.56.1",
+    date: "2026-09-05",
+    title: "Synapse Noble APT Stall Fix & Resilient Stage 1 Package Provisioning",
+    changes: [
+      "Resolved Matrix.org APT Stall on Ubuntu 24.04 (Noble): Cleaned up broken/stalled third-party matrix-org lists and prioritized primary distribution repositories (Ubuntu Universe native matrix-synapse package).",
+      "Strict GPG Keyring & Network Timeouts: Added strict 8s connect timeout and size verification before adding matrix.org repos; automatically removes broken repos if update fails.",
+      "Increased Stage 1 Provisioning Ceiling: Raised node package installation timeout from 90s to 360s (6 mins), preventing premature timeouts on remote servers under slow network conditions.",
+      "Python Virtual Environment Fallback: Added automatic fallback to /opt/venvs/matrix-synapse with systemd service unit creation if APT installation fails."
+    ]
+  },
   {
     version: "2.56.0",
     date: "2026-09-05",

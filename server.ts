@@ -28506,7 +28506,7 @@ async function startServer() {
                     script: string,
                     tag: string,
                     desc: string,
-                    timeoutMs: number = 90000
+                    timeoutMs: number = 360000
                   ): Promise<void> => {
                     const lineOut = (txt: string) => {
                       for (const l of txt.split('\n')) {
@@ -28588,8 +28588,9 @@ async function startServer() {
                   // DB base script
                   const pgBaseScript = `
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y postgresql postgresql-contrib postgresql-client
+APT_OPTS="-o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=1 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+apt-get update -y $APT_OPTS || true
+apt-get install -y $APT_OPTS postgresql postgresql-contrib postgresql-client
 
 # Guarantee psql binary is available in standard path
 export PATH="/usr/lib/postgresql/17/bin:/usr/lib/postgresql/16/bin:/usr/lib/postgresql/15/bin:/usr/lib/postgresql/14/bin:/usr/lib/postgresql/13/bin:/usr/lib/postgresql/12/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
@@ -28801,8 +28802,20 @@ echo "DB_BASE_PROVISION_COMPLETE"
                     // Synapse base script
                   const synBaseScript = `
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y debconf-utils lsb-release curl wget gnupg apt-transport-https python3 python3-pip python3-yaml python3-psycopg2 nginx openssl
+
+# Clean broken third-party repositories that might cause apt-get update to stall or fail
+rm -f /etc/apt/sources.list.d/matrix-org.list /etc/apt/sources.list.d/matrix*.list 2>/dev/null || true
+
+# Pre-configure APT options with strict timeouts so it never hangs indefinitely
+APT_OPTS="-o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=1 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+
+# Ensure universe repository is enabled on Ubuntu systems
+if command -v add-apt-repository >/dev/null 2>&1; then
+  add-apt-repository -y universe 2>/dev/null || true
+fi
+
+apt-get update -y $APT_OPTS || true
+apt-get install -y $APT_OPTS debconf-utils lsb-release curl wget gnupg apt-transport-https python3 python3-pip python3-yaml python3-psycopg2 nginx openssl
 
 # Strict Service Isolation: Ensure PostgreSQL does NOT run on dedicated Synapse Server
 ${isSynapseIsolatedFromDb ? `
@@ -28820,17 +28833,78 @@ rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default 2>/dev
 echo "matrix-synapse matrix-synapse/server-name string ${config.HS_DOMAIN}" | debconf-set-selections 2>/dev/null || true
 echo "matrix-synapse matrix-synapse/report-stats boolean false" | debconf-set-selections 2>/dev/null || true
 
-# Add Matrix.org official repo
-if [ ! -f /etc/apt/sources.list.d/matrix-org.list ]; then
-  mkdir -p /etc/apt/keyrings
-  wget -qO /etc/apt/keyrings/matrix-org-archive-keyring.gpg https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg 2>/dev/null || true
-  echo "deb [signed-by=/etc/apt/keyrings/matrix-org-archive-keyring.gpg] https://packages.matrix.org/debian/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/matrix-org.list
-  apt-get update -y || true
+# Ensure matrix-synapse system user exists
+id -u matrix-synapse >/dev/null 2>&1 || useradd -r -s /bin/false -d /var/lib/matrix-synapse matrix-synapse 2>/dev/null || true
+
+# 1. Primary Attempt: Install matrix-synapse from primary distribution repositories (e.g. Ubuntu Universe)
+SYNAPSE_INSTALLED=0
+if dpkg -s matrix-synapse >/dev/null 2>&1 || dpkg -s matrix-synapse-py3 >/dev/null 2>&1; then
+  echo "✅ [Synapse Package] matrix-synapse is already installed."
+  SYNAPSE_INSTALLED=1
+else
+  echo "📦 Attempting to install matrix-synapse from primary OS repositories..."
+  apt-get install -y $APT_OPTS matrix-synapse 2>/dev/null && SYNAPSE_INSTALLED=1 || true
 fi
 
-apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" matrix-synapse-py3 || apt-get install -y matrix-synapse || true
+# 2. Secondary Attempt: If absent, verify and retrieve Matrix.org official repo only if keyring is valid
+if [ "$SYNAPSE_INSTALLED" = "0" ]; then
+  DISTRO_CODENAME="$(lsb_release -cs 2>/dev/null || echo '')"
+  mkdir -p /etc/apt/keyrings
+  KEYRING_PATH="/etc/apt/keyrings/matrix-org-archive-keyring.gpg"
+  rm -f "$KEYRING_PATH"
+  
+  echo "🔍 Verifying Matrix.org official repository availability..."
+  curl -fsSL --connect-timeout 8 -m 12 https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg -o "$KEYRING_PATH" 2>/dev/null || \
+  wget --timeout=8 --tries=2 -qO "$KEYRING_PATH" https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg 2>/dev/null || true
+  
+  if [ -s "$KEYRING_PATH" ] && [ -n "$DISTRO_CODENAME" ]; then
+    echo "deb [signed-by=$KEYRING_PATH] https://packages.matrix.org/debian/ $DISTRO_CODENAME main" > /etc/apt/sources.list.d/matrix-org.list
+    if apt-get update -y $APT_OPTS; then
+      apt-get install -y $APT_OPTS matrix-synapse-py3 2>/dev/null && SYNAPSE_INSTALLED=1 || \
+      apt-get install -y $APT_OPTS matrix-synapse 2>/dev/null && SYNAPSE_INSTALLED=1 || true
+    else
+      echo "⚠️ Matrix.org repository update timed out or failed. Cleaning up to prevent stall..."
+      rm -f /etc/apt/sources.list.d/matrix-org.list
+    fi
+  fi
+fi
 
-# Ensure psycopg2 and pyyaml are installed in Synapse virtualenv to prevent 502 startup failure
+# 3. Tertiary Attempt: Fall back to Python virtual environment in /opt/venvs/matrix-synapse if APT failed
+if [ "$SYNAPSE_INSTALLED" = "0" ] && [ ! -x /opt/venvs/matrix-synapse/bin/python ]; then
+  echo "⚠️ APT package not found; setting up Matrix Synapse in /opt/venvs/matrix-synapse..."
+  apt-get install -y $APT_OPTS python3-venv python3-dev build-essential libffi-dev libssl-dev libpq-dev 2>/dev/null || true
+  mkdir -p /opt/venvs
+  python3 -m venv /opt/venvs/matrix-synapse 2>/dev/null || true
+  if [ -x /opt/venvs/matrix-synapse/bin/pip ]; then
+    /opt/venvs/matrix-synapse/bin/pip install --timeout 30 --upgrade pip setuptools wheel 2>/dev/null || true
+    /opt/venvs/matrix-synapse/bin/pip install --timeout 90 "matrix-synapse[postgres]" psycopg2-binary pyyaml 2>/dev/null && SYNAPSE_INSTALLED=1 || true
+  fi
+
+  if [ ! -f /etc/systemd/system/matrix-synapse.service ] && [ ! -f /lib/systemd/system/matrix-synapse.service ]; then
+    cat << 'EOFSVC' > /etc/systemd/system/matrix-synapse.service
+[Unit]
+Description=Matrix Synapse Homeserver
+After=network.target
+
+[Service]
+Type=simple
+User=matrix-synapse
+Group=matrix-synapse
+WorkingDirectory=/var/lib/matrix-synapse
+ExecStart=/opt/venvs/matrix-synapse/bin/python -m synapse.app.homeserver --config-path=/etc/matrix-synapse/homeserver.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+SyslogIdentifier=matrix-synapse
+
+[Install]
+WantedBy=multi-user.target
+EOFSVC
+    systemctl daemon-reload 2>/dev/null || true
+  fi
+fi
+
+# Ensure psycopg2 and pyyaml are installed in Synapse virtualenv or system to prevent 502 startup failure
 if [ -d /opt/venvs/matrix-synapse ]; then
   /opt/venvs/matrix-synapse/bin/pip install --upgrade psycopg2-binary pyyaml 2>/dev/null || true
 fi
@@ -28953,8 +29027,9 @@ echo "SYNAPSE_BASE_PROVISION_COMPLETE"
                   // Element base script
                   const elemBaseScript = `
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y nginx wget curl tar openssl
+APT_OPTS="-o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=1 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+apt-get update -y $APT_OPTS || true
+apt-get install -y $APT_OPTS nginx wget curl tar openssl
 
 # Strict Service Isolation: Ensure Synapse or PostgreSQL do NOT run on dedicated Element Web Server
 ${isElementIsolatedFromSynapse ? `
@@ -29040,9 +29115,9 @@ echo "ELEMENT_BASE_PROVISION_COMPLETE"
 
                   // Execute all three node provisions concurrently!
                   await Promise.all([
-                    runNodeTask(isDbRemote, dbConnProfile, pgBaseScript, 'Database Node', dbNode.host || '127.0.0.1'),
-                    runNodeTask(isSynRemote, synConnProfile, synBaseScript, 'Synapse Node', synHost),
-                    runNodeTask(isElemRemote, elemConnProfile, elemBaseScript, 'Element Web Node', elemNode.host || '127.0.0.1')
+                    runNodeTask(isDbRemote, dbConnProfile, pgBaseScript, 'Database Node', dbNode.host || '127.0.0.1', 360000),
+                    runNodeTask(isSynRemote, synConnProfile, synBaseScript, 'Synapse Node', synHost, 360000),
+                    runNodeTask(isElemRemote, elemConnProfile, elemBaseScript, 'Element Web Node', elemNode.host || '127.0.0.1', 360000)
                   ]);
 
                   logOut('✅ [STAGE 1/3 SUCCESS] Base dependencies, repositories & packages installed across all 3 nodes.');
@@ -29363,8 +29438,8 @@ echo "ELEMENT_WIRING_COMPLETE"
 `;
 
                   await Promise.all([
-                    runNodeTask(isSynRemote, synConnProfile, synapseWireScript, 'Synapse Node', synHost),
-                    runNodeTask(isElemRemote, elemConnProfile, elemWireScript, 'Element Web Node', elemNode.host || '127.0.0.1')
+                    runNodeTask(isSynRemote, synConnProfile, synapseWireScript, 'Synapse Node', synHost, 180000),
+                    runNodeTask(isElemRemote, elemConnProfile, elemWireScript, 'Element Web Node', elemNode.host || '127.0.0.1', 180000)
                   ]);
 
                   logOut('✅ [STAGE 2/3 SUCCESS] Cross-node network wiring and configuration parameters successfully applied.');

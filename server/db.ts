@@ -997,7 +997,7 @@ export async function executeStreamingSSHCommand(
   targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig,
   onData?: (data: string) => void,
   onErr?: (data: string) => void,
-  timeoutMs: number = 90000
+  timeoutMs: number = 360000
 ): Promise<number> {
   const targetConfig = resolveNodeProfile(config, targetNode);
 

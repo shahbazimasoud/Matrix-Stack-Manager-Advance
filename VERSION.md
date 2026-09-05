@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.56.0** (Released: 2026-09-05)
+## Current Panel Version: **v2.56.1** (Released: 2026-09-05)
 
 ### Changelog History
+
+#### **v2.56.1** - 2026-09-05
+- **Synapse Noble APT Stall Fix & Resilient Stage 1 Package Provisioning**:
+  - **Resolved Matrix.org APT Stall on Ubuntu 24.04 (Noble)**: Eliminated stalls caused by missing or throttled GPG keyrings and unsupported third-party repo components by prioritizing native `matrix-synapse` from Ubuntu Universe.
+  - **Strict APT & Keyring Timeouts**: Added strict 8s timeout with payload size verification for third-party keyrings; configured APT options (`Acquire::http::Timeout=15`, `Acquire::https::Timeout=15`, `Acquire::Retries=1`) to prevent indefinite blocking.
+  - **Increased Remote Timeout Windows**: Raised remote SSH command execution timeout in Stage 1 from 90s to 360s (6 minutes) and Stage 2 to 180s (3 minutes) to accommodate package downloads across slow networks.
+  - **Python Virtual Environment Fallback**: If APT packages are not provided by the distribution, automatically sets up `/opt/venvs/matrix-synapse` and provisions the systemd service unit.
 
 #### **v2.56.0** - 2026-09-05
 - **Domain-Aware Multi-Server Certificate Routing (Synapse & Element Nginx Dynamic Deployment)**:
