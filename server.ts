@@ -21894,14 +21894,33 @@ async function getDiscoveredDomains(): Promise<string[]> {
     }
   };
 
-  // 1. Add active connection host/domain if set
+  // 1. Add active connection host/domain if set (Synapse, Element, Base)
   const activeConn = getActiveConnection();
   if (activeConn) {
     if (activeConn.domain) addDomain(activeConn.domain);
+    if ((activeConn as any).hsDomain) addDomain((activeConn as any).hsDomain);
+    if ((activeConn as any).elementDomain) addDomain((activeConn as any).elementDomain);
+    if (activeConn.synapseNode?.domain) addDomain(activeConn.synapseNode.domain);
+    if (activeConn.elementNode?.domain) addDomain(activeConn.elementNode.domain);
     if (activeConn.host && !activeConn.host.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
       addDomain(activeConn.host);
     }
   }
+
+  // 1b. Add domains directly configured in /etc/matrix-stack.conf
+  try {
+    const confRaw = await readConfigContent("/etc/matrix-stack.conf", "");
+    if (confRaw) {
+      const hsMatch = confRaw.match(/^HS_DOMAIN\s*=\s*(.+)$/m) || confRaw.match(/^PUBLIC_SERVER_NAME\s*=\s*(.+)$/m);
+      if (hsMatch && hsMatch[1]) addDomain(hsMatch[1].trim().replace(/['"]/g, ""));
+      const elemMatch = confRaw.match(/^(?:ELEMENT_DOMAIN|WEB_DOMAIN)\s*=\s*(.+)$/m);
+      if (elemMatch && elemMatch[1]) addDomain(elemMatch[1].trim().replace(/['"]/g, ""));
+      const baseMatch = confRaw.match(/^BASE_DOMAIN\s*=\s*(.+)$/m);
+      if (baseMatch && baseMatch[1]) addDomain(baseMatch[1].trim().replace(/['"]/g, ""));
+      const panMatch = confRaw.match(/^PANEL_DOMAIN\s*=\s*(.+)$/m);
+      if (panMatch && panMatch[1]) addDomain(panMatch[1].trim().replace(/['"]/g, ""));
+    }
+  } catch (_) {}
 
   // 2. Add domains from database registered nodes
   try {
@@ -21909,6 +21928,10 @@ async function getDiscoveredDomains(): Promise<string[]> {
     if (db.connections && Array.isArray(db.connections)) {
       db.connections.forEach((c: any) => {
         if (c.domain) addDomain(c.domain);
+        if (c.hsDomain) addDomain(c.hsDomain);
+        if (c.elementDomain) addDomain(c.elementDomain);
+        if (c.synapseNode?.domain) addDomain(c.synapseNode.domain);
+        if (c.elementNode?.domain) addDomain(c.elementNode.domain);
         if (c.host && !c.host.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) addDomain(c.host);
       });
     }
@@ -22005,6 +22028,188 @@ printf "%s\n" "\${doms[@]}" | tr " " "\n" | sort -u
   return sorted;
 }
 
+export interface ClusterDomainInfo {
+  synapseDomain: string;
+  synapseHost: string;
+  elementDomain: string;
+  elementHost: string;
+  panelDomain: string;
+  baseDomain: string;
+  isDistributed: boolean;
+  synapseDomainsList: string[];
+  elementDomainsList: string[];
+  panelDomainsList: string[];
+}
+
+// Helper: Inspect active cluster topology, connection profiles, and configuration files to build domain-to-server mapping
+async function getClusterDomainMap(activeConnInput?: any): Promise<ClusterDomainInfo> {
+  const conn = activeConnInput || getActiveConnection();
+  const isDistributed = Boolean(conn?.deploymentMode === 'distributed' && conn?.elementNode?.host);
+
+  let synapseHost = conn?.synapseNode?.host || conn?.host || "127.0.0.1";
+  let elementHost = conn?.elementNode?.host || "";
+  let synapseDomain = conn?.hsDomain || conn?.synapseNode?.domain || conn?.domain || "";
+  let elementDomain = conn?.elementDomain || conn?.elementNode?.domain || "";
+  let baseDomain = conn?.domain || conn?.baseDomain || "";
+  let panelDomain = conn?.panelDomain || "";
+
+  // Read /etc/matrix-stack.conf if available
+  try {
+    const confRaw = await readConfigContent("/etc/matrix-stack.conf", "");
+    if (confRaw) {
+      const hsM = confRaw.match(/^HS_DOMAIN\s*=\s*(.+)$/m) || confRaw.match(/^PUBLIC_SERVER_NAME\s*=\s*(.+)$/m);
+      if (hsM && hsM[1] && !synapseDomain) synapseDomain = hsM[1].trim().replace(/['"]/g, "");
+      const elemM = confRaw.match(/^ELEMENT_DOMAIN\s*=\s*(.+)$/m) || confRaw.match(/^WEB_DOMAIN\s*=\s*(.+)$/m);
+      if (elemM && elemM[1] && !elementDomain) elementDomain = elemM[1].trim().replace(/['"]/g, "");
+      const baseM = confRaw.match(/^BASE_DOMAIN\s*=\s*(.+)$/m);
+      if (baseM && baseM[1] && !baseDomain) baseDomain = baseM[1].trim().replace(/['"]/g, "");
+      const panM = confRaw.match(/^PANEL_DOMAIN\s*=\s*(.+)$/m);
+      if (panM && panM[1] && !panelDomain) panelDomain = panM[1].trim().replace(/['"]/g, "");
+    }
+  } catch (_) {}
+
+  // Read homeserver.yaml if needed
+  try {
+    const hsYaml = await readConfigContent("/etc/matrix-synapse/homeserver.yaml", "");
+    if (hsYaml && !synapseDomain) {
+      const parsed = parseHomeserverYaml(hsYaml);
+      if (parsed?.server_name) synapseDomain = parsed.server_name;
+    }
+  } catch (_) {}
+
+  const synapseDomainsList = [synapseDomain].filter(Boolean);
+  const elementDomainsList = [elementDomain].filter(Boolean);
+  const panelDomainsList = [panelDomain].filter(Boolean);
+
+  if (baseDomain) {
+    if (!synapseDomain) synapseDomain = `matrix.${baseDomain}`;
+    if (!elementDomain) elementDomain = `chat.${baseDomain}`;
+    if (!synapseDomainsList.includes(`matrix.${baseDomain}`)) synapseDomainsList.push(`matrix.${baseDomain}`);
+    if (!elementDomainsList.includes(`chat.${baseDomain}`)) elementDomainsList.push(`chat.${baseDomain}`);
+    if (!elementDomainsList.includes(`element.${baseDomain}`)) elementDomainsList.push(`element.${baseDomain}`);
+    if (!panelDomainsList.includes(`panel.${baseDomain}`)) panelDomainsList.push(`panel.${baseDomain}`);
+  }
+
+  return {
+    synapseDomain,
+    synapseHost,
+    elementDomain,
+    elementHost,
+    panelDomain,
+    baseDomain,
+    isDistributed,
+    synapseDomainsList,
+    elementDomainsList,
+    panelDomainsList
+  };
+}
+
+// Helper: Determine target node(s) based on domain type (Synapse homeserver vs. Element Web vs. Wildcard)
+function determineNodesForDomain(
+  domain: string,
+  clusterMap: ClusterDomainInfo,
+  requestedTarget?: 'auto' | 'all' | 'synapse' | 'element' | 'default'
+): { nodes: ('synapse' | 'element')[]; isElement: boolean; isSynapse: boolean; isMulti: boolean; reason: string } {
+  const clean = domain.toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+
+  if (!clusterMap.isDistributed) {
+    return {
+      nodes: ['synapse'],
+      isElement: false,
+      isSynapse: true,
+      isMulti: false,
+      reason: 'حالت تک‌سرور مستقل (Standalone): تمام سرویس‌ها و دامنه‌ها روی سرور اصلی قرار دارند.'
+    };
+  }
+
+  if (requestedTarget === 'synapse') {
+    return {
+      nodes: ['synapse'],
+      isElement: false,
+      isSynapse: true,
+      isMulti: false,
+      reason: `انتخاب صریح نود سرور سیناپس (${clusterMap.synapseHost})`
+    };
+  }
+  if (requestedTarget === 'element') {
+    return {
+      nodes: ['element'],
+      isElement: true,
+      isSynapse: false,
+      isMulti: false,
+      reason: `انتخاب صریح نود سرور المنت وب (${clusterMap.elementHost})`
+    };
+  }
+  if (requestedTarget === 'all') {
+    return {
+      nodes: ['synapse', 'element'],
+      isElement: true,
+      isSynapse: true,
+      isMulti: true,
+      reason: `استقرار کامل روی تمام نودهای کلاستر (سرور سیناپس: ${clusterMap.synapseHost} و سرور المنت: ${clusterMap.elementHost})`
+    };
+  }
+
+  // Auto routing:
+  const isWildcard = clean.startsWith('*.') || !clean.includes('.');
+  const isBase = clusterMap.baseDomain && (clean === clusterMap.baseDomain || clean === `*.${clusterMap.baseDomain}`);
+
+  if (isWildcard || isBase) {
+    return {
+      nodes: ['synapse', 'element'],
+      isElement: true,
+      isSynapse: true,
+      isMulti: true,
+      reason: `دامنه وایلدکارد / پایه (${clean}) هر دو سرور سیناپس (${clusterMap.synapseHost}) و المنت وب (${clusterMap.elementHost}) را پوشش می‌دهد.`
+    };
+  }
+
+  const isElem = clusterMap.elementDomainsList.some(d => d && (clean === d || clean.endsWith(`.${d}`))) ||
+    clean.startsWith('element.') || clean.startsWith('chat.') || clean.startsWith('web.') || clean.startsWith('im.') || clean.startsWith('client.') || clean.startsWith('messenger.');
+
+  const isSyn = clusterMap.synapseDomainsList.some(d => d && (clean === d || clean.endsWith(`.${d}`))) ||
+    clean.startsWith('matrix.') || clean.startsWith('synapse.');
+
+  if (isElem && !isSyn) {
+    return {
+      nodes: ['element'],
+      isElement: true,
+      isSynapse: false,
+      isMulti: false,
+      reason: `دامنه ${clean} متعلق به سرور المنت وب (${clusterMap.elementHost}) است و مستقیماً روی Nginx این سرور سوار می‌شود.`
+    };
+  }
+
+  if (isSyn && !isElem) {
+    return {
+      nodes: ['synapse'],
+      isElement: false,
+      isSynapse: true,
+      isMulti: false,
+      reason: `دامنه ${clean} متعلق به سرور سیناپس (${clusterMap.synapseHost}) است و مستقیماً روی Nginx این سرور سوار می‌شود.`
+    };
+  }
+
+  if (clean.startsWith('panel.') || clean.startsWith('admin.')) {
+    return {
+      nodes: ['synapse'],
+      isElement: false,
+      isSynapse: true,
+      isMulti: false,
+      reason: `دامنه پنل مدیریت (${clean}) روی سرور اصلی سیناپس (${clusterMap.synapseHost}) سوار می‌شود.`
+    };
+  }
+
+  // Default for distributed: deploy across both for safety
+  return {
+    nodes: ['synapse', 'element'],
+    isElement: true,
+    isSynapse: true,
+    isMulti: true,
+    reason: `دامنه ${clean} جهت پوشش کامل روی هر دو سرور کلاستر (سیناپس و المنت) سوار شد.`
+  };
+}
+
 // Helper: Ensure Nginx SSL site configuration exists and SSL certs are deployed across server paths
 async function ensureNginxSslSiteConfig(
   domain: string,
@@ -22023,13 +22228,10 @@ async function ensureNginxSslSiteConfig(
   }
 
   const activeConn = getActiveConnection();
-  let synHost = "127.0.0.1";
-  let hsDomain = cleanDomain;
-  if (activeConn) {
-    if (activeConn.synapseNode?.host) synHost = activeConn.synapseNode.host;
-    else if (activeConn.host) synHost = activeConn.host;
-    if (activeConn.domain) hsDomain = activeConn.domain;
-  }
+  const clusterMap = await getClusterDomainMap(activeConn);
+  const synHost = clusterMap.synapseHost;
+  const hsDomain = clusterMap.synapseDomain || cleanDomain;
+  const elemDomain = clusterMap.elementDomain || cleanDomain;
 
   // Pre-generate configs in Base64 to avoid fragile heredocs and nested EOF syntax errors in shell strings
   const panelNginxConf = `server {
@@ -22056,7 +22258,7 @@ async function ensureNginxSslSiteConfig(
 }
 `;
 
-  // For Element Web: Architecture specifies Element Web communicates with Synapse/Homeserver via port 443
+  // For Element Web: Element Web communicates with Synapse/Homeserver via port 443
   // If distributed multi-server, proxy over port 443 with SSL SNI; if local, proxy to 8008 or 443
   const isSynRemote = synHost !== "127.0.0.1" && synHost !== "localhost";
   const elemProxyPass = isSynRemote ? `https://${synHost}:443` : `http://127.0.0.1:8008`;
@@ -22142,6 +22344,7 @@ d="${cleanDomain}"
 cert="${certPath}"
 key="${keyPath}"
 is_panel="${isPanel ? "true" : "false"}"
+target_node="${targetNode}"
 
 # 1. Create standard SSL directory and copy cert/key as both .crt and .pem
 mkdir -p /etc/nginx/ssl
@@ -22151,17 +22354,19 @@ cp "$key" "/etc/nginx/ssl/\${d}.key" 2>/dev/null || true
 chmod 600 "/etc/nginx/ssl/\${d}.key" 2>/dev/null || true
 chown root:root "/etc/nginx/ssl/\${d}.key" 2>/dev/null || true
 
-# Update /etc/ssl/matrix if present
+# Update /etc/ssl/matrix
 mkdir -p /etc/ssl/matrix 2>/dev/null || true
-if [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]]; then
+if [ "$target_node" = "element" ] || [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]] || [ "$d" = "${elemDomain}" ]; then
   cp "$cert" /etc/ssl/matrix/element.crt 2>/dev/null || true
   cp "$key" /etc/ssl/matrix/element.key 2>/dev/null || true
   chmod 600 /etc/ssl/matrix/element.key 2>/dev/null || true
 fi
-if [[ "\${d}" == matrix* ]] || [[ "\${d}" == synapse* ]] || [ "$d" = "${hsDomain}" ]; then
+if [ "$target_node" = "synapse" ] || [[ "\${d}" == matrix* ]] || [[ "\${d}" == synapse* ]] || [ "$d" = "${hsDomain}" ]; then
   cp "$cert" /etc/ssl/matrix/synapse.crt 2>/dev/null || true
   cp "$key" /etc/ssl/matrix/synapse.key 2>/dev/null || true
   chmod 600 /etc/ssl/matrix/synapse.key 2>/dev/null || true
+  chown matrix-synapse:matrix-synapse /etc/ssl/matrix/synapse.* 2>/dev/null || true
+  chmod 644 /etc/ssl/matrix/synapse.crt 2>/dev/null || true
 fi
 
 # Also populate letsencrypt live folder if domain matches
@@ -22175,7 +22380,7 @@ chmod 600 "/etc/letsencrypt/live/\${d}/privkey.pem" 2>/dev/null || true
 for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix.conf /etc/nginx/sites-enabled/matrix-synapse.conf /etc/nginx/conf.d/matrix.conf /etc/nginx/sites-available/wellknown.conf /etc/nginx/sites-enabled/wellknown.conf /etc/nginx/conf.d/wellknown.conf; do
   if [ -f "$conf_path" ]; then
     s_name=$(grep -E -h "server_name" "$conf_path" 2>/dev/null | grep -v "^#" | sed "s/server_name//" | tr ";" " ")
-    if [[ "$s_name" == *"$d"* ]] || [[ "$d" == matrix* ]] || [[ "$d" == synapse* ]] || [ "$d" = "${hsDomain}" ]; then
+    if [[ "$s_name" == *"$d"* ]] || [ "$target_node" = "synapse" ] || [ "$d" = "${hsDomain}" ]; then
       if grep -q "ssl_certificate " "$conf_path"; then
         sed -i -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$conf_path"
         sed -i -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$conf_path"
@@ -22184,10 +22389,10 @@ for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-availab
   fi
 done
 
-for conf_path in /etc/nginx/sites-available/element.conf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/element.conf /etc/nginx/sites-enabled/element-web.conf /etc/nginx/conf.d/element.conf /etc/nginx/conf.d/element-web.conf; do
+for conf_path in /etc/nginx/sites-available/element.conf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/element.conf /etc/nginx/sites-enabled/element-web.conf /etc/nginx/conf.d/element.conf /etc/nginx/conf.d/element-web.conf /etc/nginx/conf.d/default.conf; do
   if [ -f "$conf_path" ]; then
     s_name=$(grep -E -h "server_name" "$conf_path" 2>/dev/null | grep -v "^#" | sed "s/server_name//" | tr ";" " ")
-    if [[ "$s_name" == *"$d"* ]] || [[ "$d" == element* ]] || [[ "$d" == chat* ]] || [[ "$d" == web* ]]; then
+    if [[ "$s_name" == *"$d"* ]] || [ "$target_node" = "element" ] || [ "$d" = "${elemDomain}" ]; then
       if grep -q "ssl_certificate " "$conf_path"; then
         sed -i -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$conf_path"
         sed -i -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$conf_path"
@@ -22221,7 +22426,7 @@ if ! grep -rq "server_name.*\\b\${d}\\b" /etc/nginx/ 2>/dev/null; then
 
   if [ "$is_panel" = "true" ]; then
     echo "${panelB64}" | base64 -d > "$target_conf"
-  elif [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]]; then
+  elif [ "$target_node" = "element" ] || [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]] || [ "$d" = "${elemDomain}" ]; then
     mkdir -p /var/www/element
     echo "${elemB64}" | base64 -d > "$target_conf"
   else
@@ -22233,6 +22438,12 @@ if ! grep -rq "server_name.*\\b\${d}\\b" /etc/nginx/ 2>/dev/null; then
     mkdir -p /etc/nginx/sites-enabled
     ln -sf "$target_conf" "/etc/nginx/sites-enabled/\${conf_name}" 2>/dev/null || true
   fi
+fi
+
+# 5. Open ports 80 and 443 in firewall if ufw exists
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow 80/tcp >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
 fi
 
 exit 0
@@ -22270,7 +22481,7 @@ async function deployCertificatePipeline(
   targetNodeInput?: 'auto' | 'all' | 'synapse' | 'element' | 'default',
   certRawContent?: string,
   keyRawContent?: string
-): Promise<{ success: boolean; stage?: string; error?: string; warnings?: string[]; details?: string }> {
+): Promise<{ success: boolean; stage?: string; error?: string; warnings?: string[]; details?: string; deployedNodes?: string[]; routeReason?: string }> {
   const timestamp = Math.floor(Date.now() / 1000);
   const certDest = `/etc/nginx/ssl/${domain}.crt`;
   const keyDest = `/etc/nginx/ssl/${domain}.key`;
@@ -22279,20 +22490,9 @@ async function deployCertificatePipeline(
   const keyBackup = `${backupDir}/${domain}.key.bak_${timestamp}`;
 
   const activeConn = getActiveConnection();
-  const isDistributed = activeConn?.deploymentMode === 'distributed' && Boolean(activeConn?.elementNode?.host);
-  const isElemDomain = domain.startsWith('element') || domain.startsWith('chat') || domain.startsWith('web');
-  const isSynDomain = domain.startsWith('matrix') || domain.startsWith('synapse');
-  const isWildcardOrRoot = domain.startsWith('*.') || !domain.includes('.');
-
-  let nodesToDeploy: ('synapse' | 'element')[] = ['synapse'];
-
-  if (targetNodeInput === 'all' || (targetNodeInput === 'auto' && (isWildcardOrRoot || (!isElemDomain && !isSynDomain)))) {
-    nodesToDeploy = isDistributed ? ['synapse', 'element'] : ['synapse'];
-  } else if (targetNodeInput === 'element' || (targetNodeInput === 'auto' && isElemDomain)) {
-    nodesToDeploy = isDistributed ? ['element'] : ['synapse'];
-  } else {
-    nodesToDeploy = ['synapse'];
-  }
+  const clusterMap = await getClusterDomainMap(activeConn);
+  const routeDecision = determineNodesForDomain(domain, clusterMap, targetNodeInput);
+  const nodesToDeploy: ('synapse' | 'element')[] = routeDecision.nodes;
 
   // Obtain Base64 payloads for robust delivery to remote nodes
   let certB64 = "";
@@ -22379,7 +22579,9 @@ exit 0
         success: false,
         stage: 'nginx_test_failed',
         error: `Nginx configuration syntax test failed on node [${node}]:\n${testOut}`,
-        warnings: preWarnings
+        warnings: preWarnings,
+        deployedNodes: nodesToDeploy,
+        routeReason: routeDecision.reason
       };
     }
 
@@ -22427,7 +22629,9 @@ exit 0
         success: false,
         stage: 'health_check_failed',
         error: `HTTPS health check for domain ${domain} failed on node [${node}] after applying certificate (HTTP status code: ${statusCode}). Restored previous certificate.`,
-        warnings: preWarnings
+        warnings: preWarnings,
+        deployedNodes: nodesToDeploy,
+        routeReason: routeDecision.reason
       };
     }
 
@@ -22439,7 +22643,9 @@ exit 0
   return {
     success: true,
     warnings: preWarnings,
-    details: lastActiveDetails
+    details: lastActiveDetails,
+    deployedNodes: nodesToDeploy,
+    routeReason: routeDecision.reason
   };
 }
 
@@ -22459,6 +22665,9 @@ app.get("/api/certificates/domains", authenticateToken, async (req, res) => {
 app.get("/api/certificates/status", authenticateToken, async (req, res) => {
   try {
     const generalDomains = await getDiscoveredDomains().catch(() => []);
+    const activeConn = getActiveConnection();
+    const clusterMap = await getClusterDomainMap(activeConn);
+    const isDistributed = clusterMap.isDistributed;
 
     // Run Nginx & Synapse discovery
     const discoveryScript = `
@@ -22496,10 +22705,12 @@ exit 0
 `.trim();
 
     const scanOutput = await runServerCommand(discoveryScript).catch(() => "");
-    const discoveredBlocksMap = new Map<string, { certPath?: string; keyPath?: string; listenPort?: string; isDirectSynapse?: boolean; confPath?: string }>();
+    const elemScanOutput = isDistributed ? await runServerCommand(discoveryScript, undefined, 'element').catch(() => "") : "";
+    const discoveredBlocksMap = new Map<string, { certPath?: string; keyPath?: string; listenPort?: string; isDirectSynapse?: boolean; confPath?: string; sourceNode?: string }>();
 
-    if (scanOutput) {
-      scanOutput.split("\n").forEach(line => {
+    const parseScanLines = (raw: string, nodeName: string) => {
+      if (!raw) return;
+      raw.split("\n").forEach(line => {
         const parts = line.split("|");
         if (parts[0] === "NGINX_BLOCK" && parts[1]) {
           const dom = parts[1].toLowerCase().trim();
@@ -22508,7 +22719,8 @@ exit 0
             keyPath: parts[3] || "",
             listenPort: parts[4] || "443",
             isDirectSynapse: false,
-            confPath: parts[5] || ""
+            confPath: parts[5] || "",
+            sourceNode: nodeName
           });
         } else if (parts[0] === "SYNAPSE_TLS" && parts[1]) {
           const dom = parts[1].toLowerCase().trim();
@@ -22517,11 +22729,15 @@ exit 0
             keyPath: parts[3] || "",
             listenPort: parts[4] || "8448",
             isDirectSynapse: true,
-            confPath: parts[5] || ""
+            confPath: parts[5] || "",
+            sourceNode: nodeName
           });
         }
       });
-    }
+    };
+
+    parseScanLines(scanOutput, 'synapse');
+    if (elemScanOutput) parseScanLines(elemScanOutput, 'element');
 
     // Combine general domains and discovered Nginx/Synapse domains
     const allDomainsSet = new Set<string>([...generalDomains, ...discoveredBlocksMap.keys()]);
@@ -22529,6 +22745,8 @@ exit 0
 
     for (const domain of Array.from(allDomainsSet).sort()) {
       const blockInfo = discoveredBlocksMap.get(domain);
+      const routeInfo = determineNodesForDomain(domain, clusterMap, 'auto');
+
       let serviceType = "Nginx Reverse Proxy";
       let certPath = blockInfo?.certPath || `/etc/nginx/ssl/${domain}.crt`;
       let keyPath = blockInfo?.keyPath || `/etc/nginx/ssl/${domain}.key`;
@@ -22538,7 +22756,7 @@ exit 0
       if (blockInfo?.isDirectSynapse) {
         serviceType = "Synapse (TLS مستقیم)";
         if (listenPort === "443") listenPort = "8448";
-      } else if (domain.startsWith("element") || domain.startsWith("chat") || domain.startsWith("web")) {
+      } else if (routeInfo.isElement) {
         serviceType = "Element Web (nginx)";
       } else if (domain.startsWith("panel") || domain.startsWith("admin")) {
         serviceType = "Matrix Panel (nginx)";
@@ -22568,14 +22786,16 @@ check_cert "${certPath}" "${domain}"
 ' || echo "MISSING"
 `.trim();
 
-      let targetInspectNode: 'synapse' | 'element' = 'synapse';
-      if (domain.startsWith("element") || domain.startsWith("chat") || domain.startsWith("web")) {
-        targetInspectNode = 'element';
-      }
+      let targetInspectNode: 'synapse' | 'element' = routeInfo.isElement ? 'element' : 'synapse';
       let certInfo = await runServerCommand(inspectCmd, undefined, targetInspectNode).catch(() => "MISSING");
       if ((!certInfo || certInfo.includes("MISSING")) && targetInspectNode === 'element') {
         certInfo = await runServerCommand(inspectCmd, undefined, 'synapse').catch(() => "MISSING");
       }
+
+      const targetNodeStr = routeInfo.isElement ? 'element' : (routeInfo.isSynapse ? 'synapse' : 'cluster');
+      const nodeNameStr = routeInfo.isElement
+        ? `سرور المنت وب (${clusterMap.elementHost || 'Element Node'})`
+        : (routeInfo.isSynapse ? `سرور سیناپس (${clusterMap.synapseHost || 'Synapse Node'})` : 'کلاستر (سیناپس + المنت)');
 
       if (!certInfo || certInfo.includes("MISSING") || !certInfo.includes("notAfter=")) {
         certificates.push({
@@ -22591,7 +22811,10 @@ check_cert "${certPath}" "${domain}"
           daysRemaining: 0,
           isSelfSigned: false,
           isExpired: false,
-          status: 'red'
+          status: 'red',
+          targetNode: targetNodeStr,
+          nodeName: nodeNameStr,
+          routeReason: routeInfo.reason
         });
       } else {
         const subjectMatch = certInfo.match(/subject=\s*(.+)/);
@@ -22633,15 +22856,40 @@ check_cert "${certPath}" "${domain}"
           daysRemaining,
           isSelfSigned,
           isExpired,
-          status
+          status,
+          targetNode: targetNodeStr,
+          nodeName: nodeNameStr,
+          routeReason: routeInfo.reason
         });
       }
     }
 
-    res.json({ success: true, certificates });
+    res.json({ success: true, certificates, clusterMap });
   } catch (err: any) {
     console.warn("Certificate status discovery error:", err);
     res.json({ success: true, certificates: [] });
+  }
+});
+
+// 2b. Get Domain-to-Server Routing Topology
+app.get("/api/certificates/domain-routing-info", authenticateToken, async (req, res) => {
+  try {
+    const activeConn = getActiveConnection();
+    const clusterMap = await getClusterDomainMap(activeConn);
+    const discovered = await getDiscoveredDomains();
+
+    const domainRoutes: Record<string, any> = {};
+    for (const dom of discovered) {
+      domainRoutes[dom] = determineNodesForDomain(dom, clusterMap, 'auto');
+    }
+
+    res.json({
+      success: true,
+      clusterMap,
+      domainRoutes
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to get domain routing info" });
   }
 });
 
@@ -22964,7 +23212,9 @@ app.post("/api/certificates/validate-and-upload", authenticateToken, checkPermis
       success: true,
       warnings: deployRes.warnings,
       details: deployRes.details,
-      msg: `SSL certificate successfully validated and applied for domain ${cleanDomain}.`
+      deployedNodes: deployRes.deployedNodes,
+      routeReason: deployRes.routeReason,
+      msg: `گواهی SSL با موفقیت اعتبارسنجی شد و بر اساس دامنه روی وب‌سرور Nginx سرور(های) [${(deployRes.deployedNodes || []).join(', ')}] سوار و فعال گردید.`
     });
   } catch (err: any) {
     await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
@@ -23005,7 +23255,7 @@ app.post("/api/certificates/apply-multi-domain", authenticateToken, checkPermiss
       return res.status(400).json({ error: matchRes.error || "Private key does not match the provided PEM certificate." });
     }
 
-    const results: { domain: string; success: boolean; error?: string }[] = [];
+    const results: { domain: string; success: boolean; error?: string; deployedNodes?: string[]; routeReason?: string }[] = [];
     let overallSuccess = true;
 
     for (const domain of domainsToApply) {
@@ -23020,16 +23270,16 @@ app.post("/api/certificates/apply-multi-domain", authenticateToken, checkPermiss
         [],
         isPanel,
         panelUpstream,
-        req.body.targetNode || 'all',
+        req.body.targetNode || 'auto',
         certContent,
         keyContent
       );
 
       if (deployRes.success) {
-        results.push({ domain: cleanDom, success: true });
+        results.push({ domain: cleanDom, success: true, deployedNodes: deployRes.deployedNodes, routeReason: deployRes.routeReason });
       } else {
         overallSuccess = false;
-        results.push({ domain: cleanDom, success: false, error: deployRes.error });
+        results.push({ domain: cleanDom, success: false, error: deployRes.error, deployedNodes: deployRes.deployedNodes, routeReason: deployRes.routeReason });
       }
     }
 
@@ -23039,8 +23289,8 @@ app.post("/api/certificates/apply-multi-domain", authenticateToken, checkPermiss
       success: overallSuccess,
       results,
       msg: overallSuccess 
-        ? `SSL certificate successfully applied to all ${results.length} selected domains and subdomains.`
-        : `SSL certificate application failed for some domains. Please check details.`
+        ? `گواهی معتبر SSL با موفقیت بر اساس دامنه روی وب‌سرور Nginx سرورهای مربوطه (${results.length} دامنه) سوار و فعال شد.`
+        : `اعمال گواهی SSL روی برخی دامنه‌ها با خطا مواجه شد. لطفاً جزئیات را بررسی کنید.`
     });
   } catch (err: any) {
     await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
@@ -23127,11 +23377,129 @@ app.post("/api/certificates/generate-self-signed", authenticateToken, checkPermi
       success: true,
       details: deployRes.details,
       warnings: deployRes.warnings,
-      msg: `گواهی خودامضا با اعتبار ${days} روز و SAN چنددامنه‌ای با موفقیت تولید و روی سرویس‌ها فعال شد.`
+      deployedNodes: deployRes.deployedNodes,
+      routeReason: deployRes.routeReason,
+      msg: `گواهی خودامضا با اعتبار ${days} روز و SAN چنددامنه‌ای با موفقیت تولید و بر اساس دامنه روی وب‌سرور Nginx سرور(های) [${(deployRes.deployedNodes || []).join(', ')}] سوار و فعال شد.`
     });
   } catch (err: any) {
     await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
     return res.status(500).json({ error: err.message || "خطا در تولید گواهی خودامضا." });
+  }
+});
+
+// 6b. Request Let's Encrypt Certificate via Certbot ACME (Automatic Domain-to-Server Routing)
+app.post("/api/certificates/request-letsencrypt", authenticateToken, checkPermission(["Owner", "Super Admin", "Admin"]), async (req, res) => {
+  try {
+    const { domain, email, targetNode } = req.body;
+    if (!domain) {
+      return res.status(400).json({ error: "انتخاب یا ورود نام دامنه الزامی است." });
+    }
+
+    const cleanDomain = domain.replace(/[^a-zA-Z0-9.-]/g, "").trim();
+    if (!cleanDomain) {
+      return res.status(400).json({ error: "نام دامنه نامعتبر است." });
+    }
+
+    const activeConn = getActiveConnection();
+    const clusterMap = await getClusterDomainMap(activeConn);
+    const routeDecision = determineNodesForDomain(cleanDomain, clusterMap, targetNode || 'auto');
+    const nodes = routeDecision.nodes;
+
+    const contactEmail = (email && email.trim()) || `admin@${cleanDomain}`;
+    const results: any[] = [];
+    let allOk = true;
+
+    for (const node of nodes) {
+      // 1. Ensure certbot and python3-certbot-nginx are available
+      const prepCmd = `bash -c '
+if ! command -v certbot >/dev/null 2>&1; then
+  apt-get update -y && apt-get install -y certbot python3-certbot-nginx || true
+fi
+exit 0
+'`;
+      await runServerCommand(prepCmd, undefined, node);
+
+      // 2. Run certbot certonly using nginx plugin
+      const certbotCmd = `bash -c '
+certbot certonly --nginx --non-interactive --agree-tos --email "${contactEmail}" -d "${cleanDomain}" --keep-until-expiring 2>&1
+'`;
+      const cbOut = await runServerCommand(certbotCmd, undefined, node);
+      const isSuccess = cbOut.includes("Successfully received certificate") ||
+                        cbOut.includes("Certificate not yet due for renewal") ||
+                        cbOut.includes("Keeping the existing certificate") ||
+                        cbOut.includes("Congratulations!");
+
+      const checkLive = `bash -c 'if [ -f "/etc/letsencrypt/live/${cleanDomain}/fullchain.pem" ]; then echo "EXISTS"; fi'`;
+      const liveCheck = await runServerCommand(checkLive, undefined, node);
+
+      if (!isSuccess && !liveCheck.includes("EXISTS")) {
+        allOk = false;
+        results.push({
+          node,
+          success: false,
+          error: `خطا در دریافت گواهی Let's Encrypt روی نود [${node}]:\n${cbOut}`
+        });
+        continue;
+      }
+
+      // Read newly issued cert and privkey from live path
+      const certRaw = await runServerCommand(`cat "/etc/letsencrypt/live/${cleanDomain}/fullchain.pem" 2>/dev/null || true`, undefined, node);
+      const keyRaw = await runServerCommand(`cat "/etc/letsencrypt/live/${cleanDomain}/privkey.pem" 2>/dev/null || true`, undefined, node);
+
+      // Deploy through standard pipeline to update Nginx site config and /etc/nginx/ssl
+      const tempCert = `/tmp/le_cert_${cleanDomain}_${Date.now()}.pem`;
+      const tempKey = `/tmp/le_key_${cleanDomain}_${Date.now()}.pem`;
+      await writeConfigContent(tempCert, certRaw);
+      await writeConfigContent(tempKey, keyRaw);
+
+      const deployRes = await deployCertificatePipeline(
+        cleanDomain,
+        tempCert,
+        tempKey,
+        [],
+        false,
+        "http://127.0.0.1:3000",
+        node,
+        certRaw,
+        keyRaw
+      );
+
+      await runServerCommand(`rm -f "${tempCert}" "${tempKey}"`).catch(() => {});
+
+      if (deployRes.success) {
+        results.push({
+          node,
+          success: true,
+          details: deployRes.details
+        });
+      } else {
+        allOk = false;
+        results.push({
+          node,
+          success: false,
+          error: deployRes.error
+        });
+      }
+    }
+
+    if (!allOk) {
+      return res.status(400).json({
+        success: false,
+        error: "دریافت یا اعمال گواهی Let's Encrypt روی برخی نودها با خطا مواجه شد.",
+        results,
+        routeReason: routeDecision.reason
+      });
+    }
+
+    return res.json({
+      success: true,
+      msg: `گواهی رسمی Let's Encrypt با موفقیت برای دامنه ${cleanDomain} دریافت و بر اساس نوع دامنه روی وب‌سرور Nginx سرور(های) [${nodes.join(', ')}] سوار و فعال شد.`,
+      results,
+      deployedNodes: nodes,
+      routeReason: routeDecision.reason
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "خطا در درخواست گواهی Let's Encrypt" });
   }
 });
 

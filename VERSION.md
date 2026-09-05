@@ -15,9 +15,17 @@
 
 ---
 
-## Current Panel Version: **v2.55.5** (Released: 2026-09-05)
+## Current Panel Version: **v2.56.0** (Released: 2026-09-05)
 
 ### Changelog History
+
+#### **v2.56.0** - 2026-09-05
+- **Domain-Aware Multi-Server Certificate Routing (Synapse & Element Nginx Dynamic Deployment)**:
+  - **Dynamic Domain-to-Node Detection**: Certificate pipelines in `server.ts` automatically resolve whether a domain corresponds to Matrix Synapse or Element Web based on `/etc/matrix-stack.conf`, the active connection profile, and domain naming patterns (e.g. `matrix.*`, `synapse.*` -> Synapse; `element.*`, `chat.*`, `web.*` -> Element Web).
+  - **Targeted Nginx SSL Site Configuration**: Refactored `ensureNginxSslSiteConfig` to selectively deploy virtual host configs and certificates to the correct remote server Nginx (Synapse server for matrix/synapse domains, Element Web server for element/chat domains).
+  - **Multi-Domain Certificate Propagation**: Validated PEM certificate upload and multi-domain certificate application now route certificates to their respective node endpoints across distributed clusters with automated backup and rollback.
+  - **Automated Let's Encrypt / Certbot Endpoint**: Added `/api/certificates/request-letsencrypt` and frontend UI to issue and mount official ACME/Let's Encrypt certificates directly to the matching Nginx server.
+  - **Visual Topology & Server Badges**: Added live server node tags (Synapse Node / Element Web Node) to certificate status cards and domain selection checkboxes.
 
 #### **v2.55.5** - 2026-09-05
 - **Multi-Server Port 443 API Routing, PostgreSQL Port 5432 Security, Heredoc Base64 Fix & Mother WebSocket Singleton**:

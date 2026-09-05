@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.55.5";
+export const PANEL_VERSION = "2.56.0";
 export const PANEL_BUILD_DATE = "2026-09-05";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,18 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.56.0",
+    date: "2026-09-05",
+    title: "Domain-Aware Multi-Server Certificate Routing (Synapse & Element Nginx Dynamic Deployment)",
+    changes: [
+      "Dynamic Domain-to-Node Detection: Certificate pipelines automatically resolve whether a domain corresponds to Matrix Synapse or Element Web based on /etc/matrix-stack.conf, active connection profile, and domain naming patterns.",
+      "Targeted Nginx SSL Site Configuration: Refactored ensureNginxSslSiteConfig to selectively deploy virtual host configs and certificates to the correct remote server Nginx (Synapse server for matrix/synapse domains, Element Web server for element/chat domains).",
+      "Multi-Domain Certificate Propagation: Validated PEM certificate upload and multi-domain certificate application now route certificates to their respective node endpoints across distributed clusters with automated backup and rollback.",
+      "Automated Let's Encrypt / Certbot Endpoint: Added /api/certificates/request-letsencrypt and frontend UI to issue and mount official ACME/Let's Encrypt certificates directly to the matching Nginx server.",
+      "Visual Topology & Server Badges: Added live server node tags (Synapse Node / Element Web Node) to certificate status cards and domain selection checkboxes."
+    ]
+  },
   {
     version: "2.55.5",
     date: "2026-09-05",

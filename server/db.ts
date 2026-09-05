@@ -20,6 +20,7 @@ export interface ServerNodeConfig {
   privateKey?: string;
   authType: 'password' | 'key';
   servicePort?: number;
+  domain?: string;
   webPath?: string;
   
   // Specific configurations per node role

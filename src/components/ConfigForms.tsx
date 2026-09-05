@@ -2714,9 +2714,14 @@ export default function ConfigForms({
   const [selfSignedDomain, setSelfSignedDomain] = useState('');
   const [validityDaysInput, setValidityDaysInput] = useState('825');
   const [generatingSelfSigned, setGeneratingSelfSigned] = useState(false);
-  const [selfSignedTargetNode, setSelfSignedTargetNode] = useState<'auto' | 'all' | 'synapse' | 'element'>('all');
+  const [selfSignedTargetNode, setSelfSignedTargetNode] = useState<'auto' | 'all' | 'synapse' | 'element'>('auto');
   const [syncingClusterSsl, setSyncingClusterSsl] = useState(false);
   const [customDomainInput, setCustomDomainInput] = useState('');
+  const [clusterDomainMap, setClusterDomainMap] = useState<any>(null);
+  const [requestingLetsEncrypt, setRequestingLetsEncrypt] = useState(false);
+  const [letsEncryptDomain, setLetsEncryptDomain] = useState('');
+  const [letsEncryptEmail, setLetsEncryptEmail] = useState('');
+  const [letsEncryptTargetNode, setLetsEncryptTargetNode] = useState<'auto' | 'synapse' | 'element' | 'all'>('auto');
 
   const fetchCertificatesData = async () => {
     setLoadingCerts(true);
@@ -2734,12 +2739,16 @@ export default function ConfigForms({
         if (domData.domains.length > 0) {
           setSelectedCertDomain(prev => prev || domData.domains[0]);
           setSelfSignedDomain(prev => prev || domData.domains[0]);
+          setLetsEncryptDomain(prev => prev || domData.domains[0]);
           const foundPanelDom = domData.domains.find((d: string) => d.startsWith('panel') || d.startsWith('admin')) || `panel.${domData.domains[0].replace(/^(matrix|element|chat)\./, '')}`;
           setPanelDomainInput(prev => prev || foundPanelDom);
         }
       }
       if (statusData.success && Array.isArray(statusData.certificates)) {
         setCertStatuses(statusData.certificates);
+        if (statusData.clusterMap) {
+          setClusterDomainMap(statusData.clusterMap);
+        }
       }
     } catch (err) {
       console.error("Error fetching certificates:", err);
@@ -2941,6 +2950,48 @@ export default function ConfigForms({
       setCertError(err.message || 'خطا در ارتباط با سرور');
     } finally {
       setGeneratingSelfSigned(false);
+    }
+  };
+
+  const handleRequestLetsEncrypt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetDomain = letsEncryptDomain.trim() || selectedCertDomain || (certDomains.length > 0 ? certDomains[0] : '');
+    if (!targetDomain) {
+      if (showToast) showToast('warning', lang === 'fa' ? 'لطفاً نام دامنه را وارد یا انتخاب کنید.' : 'Please enter or select a domain.');
+      return;
+    }
+    setRequestingLetsEncrypt(true);
+    setCertError(null);
+    setCertSuccessMsg(null);
+    setCertWarnings([]);
+
+    try {
+      const res = await fetch('/api/certificates/request-letsencrypt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          domain: targetDomain,
+          email: letsEncryptEmail,
+          targetNode: letsEncryptTargetNode
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setCertError(data.error || 'خطا در صدور گواهی Let\'s Encrypt');
+        if (showToast) showToast('error', data.error || 'Failed to request Let\'s Encrypt cert');
+      } else {
+        setCertSuccessMsg(data.msg || `گواهی رسمی Let's Encrypt با موفقیت برای دامنه ${targetDomain} دریافت و فعال شد.`);
+        if (showToast) showToast('success', lang === 'fa' ? 'گواهی Let\'s Encrypt با موفقیت روی Nginx سوار شد' : 'Let\'s Encrypt certificate deployed');
+        fetchCertificatesData();
+      }
+    } catch (err: any) {
+      setCertError(err.message || 'خطا در ارتباط با سرور');
+    } finally {
+      setRequestingLetsEncrypt(false);
     }
   };
 
@@ -10080,6 +10131,12 @@ export default function ConfigForms({
                               <span className="text-slate-600 dark:text-slate-300">{item.endDate}</span>
                             </div>
                           )}
+                          {item.nodeName && (
+                            <div className="flex items-center gap-1.5 pt-1.5 border-t border-slate-200/60 dark:border-white/5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">
+                              <Server className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{item.nodeName}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -10397,6 +10454,19 @@ export default function ConfigForms({
                           className="rounded bg-slate-900 border-slate-600 text-indigo-600 focus:ring-0"
                         />
                         <span className="truncate">{dom}</span>
+                        <span className={`mr-auto text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                          dom.startsWith('element') || dom.startsWith('chat') || dom.startsWith('web')
+                            ? 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-300 border border-cyan-500/20'
+                            : dom.startsWith('matrix') || dom.startsWith('synapse')
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border border-emerald-500/20'
+                            : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border border-indigo-500/20'
+                        }`}>
+                          {dom.startsWith('element') || dom.startsWith('chat') || dom.startsWith('web')
+                            ? (lang === 'fa' ? 'المنت وب' : 'Element Web')
+                            : dom.startsWith('matrix') || dom.startsWith('synapse')
+                            ? (lang === 'fa' ? 'سیناپس' : 'Synapse')
+                            : (lang === 'fa' ? 'پیش‌فرض' : 'Default')}
+                        </span>
                       </label>
                     ))
                   )}
@@ -10552,8 +10622,8 @@ export default function ConfigForms({
                       isLightMode ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-700 text-white'
                     }`}
                   >
+                    <option value="auto">{lang === 'fa' ? 'تشخیص خودکار بر اساس دامنه (سیناپس یا المنت)' : 'Auto Detect by Domain (Synapse / Element)'}</option>
                     <option value="all">{lang === 'fa' ? 'تمام سرورها (کلاستر کامل)' : 'All Nodes (Full Cluster)'}</option>
-                    <option value="auto">{lang === 'fa' ? 'تشخیص خودکار بر اساس نام دامنه' : 'Auto Detect by Domain'}</option>
                     <option value="synapse">{lang === 'fa' ? 'فقط سرور سیناپس (Synapse)' : 'Synapse Node Only'}</option>
                     <option value="element">{lang === 'fa' ? 'فقط سرور المنت وب (Element Web)' : 'Element Web Node Only'}</option>
                   </select>
@@ -10566,7 +10636,96 @@ export default function ConfigForms({
                 className="w-full py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-amber-600/25 disabled:opacity-50 cursor-pointer"
               >
                 {generatingSelfSigned ? <Loader2 className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
-                <span>{lang === 'fa' ? 'تولید و فعال‌سازی گواهی خودامضا' : 'Generate & Activate Self-Signed Certificate'}</span>
+                <span>{lang === 'fa' ? 'تولید و فعال‌سازی گواهی خودامضا روی سرور مقصد' : 'Generate & Activate Self-Signed Certificate'}</span>
+              </button>
+            </form>
+
+            {/* Section 5: Automated Let's Encrypt / ACME Certificate Issuance */}
+            <form 
+              onSubmit={handleRequestLetsEncrypt}
+              className={`p-5 rounded-2xl border transition-all space-y-4 ${
+                isLightMode ? 'bg-white border-slate-200/80 shadow-sm' : 'bg-slate-900/60 border-white/10'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${
+                  isLightMode ? 'bg-emerald-600 text-white shadow-md' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                }`}>
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className={`text-sm font-bold ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+                    {lang === 'fa' ? 'دریافت گواهی رسمی و معتبر Let\'s Encrypt (Certbot / ACME)' : 'Request Official Let\'s Encrypt Certificate'}
+                  </h3>
+                  <p className={`text-xs ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {lang === 'fa' 
+                      ? 'صدور خودکار گواهی معتبر بین‌المللی با بررسی اتصال دامنه و مسیریابی به Nginx سرور مربوطه (سیناپس یا المنت)' 
+                      : 'Automated valid SSL issuance with automatic routing to the appropriate Nginx server (Synapse or Element).'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-200'}`}>
+                    {lang === 'fa' ? 'دامنه متصل به سرور:' : 'Target Domain:'}
+                  </label>
+                  <select
+                    value={letsEncryptDomain}
+                    onChange={(e) => setLetsEncryptDomain(e.target.value)}
+                    className={`w-full p-2.5 rounded-xl border text-xs font-mono font-bold focus:outline-none transition ${
+                      isLightMode ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-700 text-white'
+                    }`}
+                  >
+                    {certDomains.map(d => (
+                      <option key={d} value={d}>
+                        {d} ({d.startsWith('element') || d.startsWith('chat') ? (lang === 'fa' ? 'سرور المنت وب' : 'Element') : d.startsWith('matrix') || d.startsWith('synapse') ? (lang === 'fa' ? 'سرور سیناپس' : 'Synapse') : (lang === 'fa' ? 'عمومی' : 'General')})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-200'}`}>
+                    {lang === 'fa' ? 'ایمیل ثبت‌نام Certbot (اختیاری):' : 'Contact Email (Optional):'}
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="admin@example.com"
+                    value={letsEncryptEmail}
+                    onChange={(e) => setLetsEncryptEmail(e.target.value)}
+                    className={`w-full p-2.5 rounded-xl border text-xs font-mono focus:outline-none transition ${
+                      isLightMode ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-700 text-white'
+                    }`}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-200'}`}>
+                    {lang === 'fa' ? 'سرور مقصد Nginx:' : 'Target Nginx Server:'}
+                  </label>
+                  <select
+                    value={letsEncryptTargetNode}
+                    onChange={(e: any) => setLetsEncryptTargetNode(e.target.value)}
+                    className={`w-full p-2.5 rounded-xl border text-xs font-bold focus:outline-none transition ${
+                      isLightMode ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-700 text-white'
+                    }`}
+                  >
+                    <option value="auto">{lang === 'fa' ? 'تشخیص خودکار بر اساس دامنه (سیناپس یا المنت)' : 'Auto Detect by Domain (Synapse / Element)'}</option>
+                    <option value="synapse">{lang === 'fa' ? 'سرور سیناپس (Synapse Node)' : 'Synapse Node'}</option>
+                    <option value="element">{lang === 'fa' ? 'سرور المنت وب (Element Web Node)' : 'Element Web Node'}</option>
+                    <option value="all">{lang === 'fa' ? 'همه سرورها' : 'All Nodes'}</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={requestingLetsEncrypt}
+                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-emerald-600/25 disabled:opacity-50 cursor-pointer"
+              >
+                {requestingLetsEncrypt ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                <span>{lang === 'fa' ? 'صدور خودکار گواهی Let\'s Encrypt و سوار کردن روی Nginx سرور مربوطه' : 'Issue Let\'s Encrypt Certificate & Apply to Server Nginx'}</span>
               </button>
             </form>
           </div>
