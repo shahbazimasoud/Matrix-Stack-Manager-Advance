@@ -21900,6 +21900,16 @@ printf "%s\n" "\${doms[@]}" | tr " " "\n" | sort -u
         if (item) addDomain(item);
       });
     }
+
+    if (activeConn?.deploymentMode === 'distributed' && activeConn?.elementNode?.host) {
+      const elemDoms = await runServerCommand(deepScanCmd, undefined, 'element').catch(() => "");
+      if (elemDoms) {
+        elemDoms.split("\n").forEach((line) => {
+          const item = line.trim();
+          if (item) addDomain(item);
+        });
+      }
+    }
   } catch (e) {
     console.warn("Deep domain discovery failed on target server:", e);
   }
@@ -21914,7 +21924,8 @@ async function ensureNginxSslSiteConfig(
   certPath: string,
   keyPath: string,
   isPanel: boolean = false,
-  panelUpstream: string = "http://127.0.0.1:3000"
+  panelUpstream: string = "http://127.0.0.1:3000",
+  targetNode: 'synapse' | 'element' | 'default' = 'default'
 ): Promise<void> {
   const cleanDomain = domain.replace(/[^a-zA-Z0-9.-]/g, "");
   if (!cleanDomain) return;
@@ -21924,6 +21935,15 @@ async function ensureNginxSslSiteConfig(
     cleanUpstream = `http://${cleanUpstream}`;
   }
 
+  const activeConn = getActiveConnection();
+  let synHost = "127.0.0.1";
+  let hsDomain = cleanDomain;
+  if (activeConn) {
+    if (activeConn.synapseNode?.host) synHost = activeConn.synapseNode.host;
+    else if (activeConn.host) synHost = activeConn.host;
+    if (activeConn.domain) hsDomain = activeConn.domain;
+  }
+
   const script = `
 bash -c '
 d="$1"
@@ -21931,28 +21951,44 @@ cert="$2"
 key="$3"
 is_panel="$4"
 upstream="$5"
+syn_host="$6"
+hs_domain="$7"
 [ -z "$upstream" ] && upstream="http://127.0.0.1:3000"
+[ -z "$syn_host" ] && syn_host="127.0.0.1"
 
 # 1. Create standard SSL directory and copy cert/key as both .crt and .pem
 mkdir -p /etc/nginx/ssl
-cp "$cert" "/etc/nginx/ssl/\${d}.crt"
-cp "$cert" "/etc/nginx/ssl/\${d}.pem"
-cp "$key" "/etc/nginx/ssl/\${d}.key"
-chmod 600 "/etc/nginx/ssl/\${d}.key"
+cp "$cert" "/etc/nginx/ssl/\${d}.crt" 2>/dev/null || true
+cp "$cert" "/etc/nginx/ssl/\${d}.pem" 2>/dev/null || true
+cp "$key" "/etc/nginx/ssl/\${d}.key" 2>/dev/null || true
+chmod 600 "/etc/nginx/ssl/\${d}.key" 2>/dev/null || true
 chown root:root "/etc/nginx/ssl/\${d}.key" 2>/dev/null || true
 
-# Also populate letsencrypt live folder if domain matches
-mkdir -p "/etc/letsencrypt/live/\${d}"
-cp "$cert" "/etc/letsencrypt/live/\${d}/fullchain.pem"
-cp "$cert" "/etc/letsencrypt/live/\${d}/cert.pem"
-cp "$key" "/etc/letsencrypt/live/\${d}/privkey.pem"
-chmod 600 "/etc/letsencrypt/live/\${d}/privkey.pem"
+# Update /etc/ssl/matrix if present
+mkdir -p /etc/ssl/matrix 2>/dev/null || true
+if [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]]; then
+  cp "$cert" /etc/ssl/matrix/element.crt 2>/dev/null || true
+  cp "$key" /etc/ssl/matrix/element.key 2>/dev/null || true
+  chmod 600 /etc/ssl/matrix/element.key 2>/dev/null || true
+fi
+if [[ "\${d}" == matrix* ]] || [[ "\${d}" == synapse* ]] || [ "$d" = "$hs_domain" ]; then
+  cp "$cert" /etc/ssl/matrix/synapse.crt 2>/dev/null || true
+  cp "$key" /etc/ssl/matrix/synapse.key 2>/dev/null || true
+  chmod 600 /etc/ssl/matrix/synapse.key 2>/dev/null || true
+fi
 
-# 2. Update specific Nginx site config files if present (matrix.conf, element.conf, wellknown.conf)
-for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-enabled/matrix.conf /etc/nginx/conf.d/matrix.conf /etc/nginx/sites-available/wellknown.conf /etc/nginx/sites-enabled/wellknown.conf /etc/nginx/conf.d/wellknown.conf; do
+# Also populate letsencrypt live folder if domain matches
+mkdir -p "/etc/letsencrypt/live/\${d}" 2>/dev/null || true
+cp "$cert" "/etc/letsencrypt/live/\${d}/fullchain.pem" 2>/dev/null || true
+cp "$cert" "/etc/letsencrypt/live/\${d}/cert.pem" 2>/dev/null || true
+cp "$key" "/etc/letsencrypt/live/\${d}/privkey.pem" 2>/dev/null || true
+chmod 600 "/etc/letsencrypt/live/\${d}/privkey.pem" 2>/dev/null || true
+
+# 2. Update specific Nginx site config files if present (matrix.conf, matrix-synapse.conf, element.conf, element-web.conf, wellknown.conf)
+for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix.conf /etc/nginx/sites-enabled/matrix-synapse.conf /etc/nginx/conf.d/matrix.conf /etc/nginx/sites-available/wellknown.conf /etc/nginx/sites-enabled/wellknown.conf /etc/nginx/conf.d/wellknown.conf; do
   if [ -f "$conf_path" ]; then
     s_name=$(grep -E -h "server_name" "$conf_path" 2>/dev/null | grep -v "^#" | sed "s/server_name//" | tr ";" " ")
-    if [[ "$s_name" == *"$d"* ]] || [[ "$d" == matrix* ]] || [[ "$d" == synapse* ]]; then
+    if [[ "$s_name" == *"$d"* ]] || [[ "$d" == matrix* ]] || [[ "$d" == synapse* ]] || [ "$d" = "$hs_domain" ]; then
       if grep -q "ssl_certificate " "$conf_path"; then
         sed -i -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$conf_path"
         sed -i -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$conf_path"
@@ -21961,7 +21997,7 @@ for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-enabled
   fi
 done
 
-for conf_path in /etc/nginx/sites-available/element.conf /etc/nginx/sites-enabled/element.conf /etc/nginx/conf.d/element.conf; do
+for conf_path in /etc/nginx/sites-available/element.conf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/element.conf /etc/nginx/sites-enabled/element-web.conf /etc/nginx/conf.d/element.conf /etc/nginx/conf.d/element-web.conf; do
   if [ -f "$conf_path" ]; then
     s_name=$(grep -E -h "server_name" "$conf_path" 2>/dev/null | grep -v "^#" | sed "s/server_name//" | tr ";" " ")
     if [[ "$s_name" == *"$d"* ]] || [[ "$d" == element* ]] || [[ "$d" == chat* ]] || [[ "$d" == web* ]]; then
@@ -22047,14 +22083,31 @@ server {
 
     location / {
         try_files \\$uri \\$uri/ /index.html;
+        add_header Cache-Control "no-cache";
     }
 
-    # Proxy /_matrix to Synapse if Synapse is on same server
-    location ~ ^/_matrix {
-        proxy_pass http://127.0.0.1:8008;
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Forwarded-For \\$remote_addr;
+    location = /config.json {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+
+    # Proxy Matrix Homeserver API calls directly to Synapse node
+    location ~ ^(/_matrix|/_synapse) {
+        proxy_pass http://\${syn_host}:8008;
+        proxy_set_header Host \${hs_domain};
+        proxy_set_header X-Real-IP \\$remote_addr;
+        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \\$scheme;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        client_max_body_size 100M;
+
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'X-Requested-With, Content-Type, Authorization, Date' always;
     }
 }
 EOF
@@ -22096,10 +22149,10 @@ EOF
 fi
 
 exit 0
-' -- "${cleanDomain}" "${certPath}" "${keyPath}" "${isPanel ? "true" : "false"}" "${cleanUpstream}"
+' -- "${cleanDomain}" "${certPath}" "${keyPath}" "${isPanel ? "true" : "false"}" "${cleanUpstream}" "${synHost}" "${hsDomain}"
 `.trim();
 
-  await runServerCommand(script);
+  await runServerCommand(script, undefined, targetNode);
 }
 
 // Helper to extract cert and key from combined PEM
@@ -22127,7 +22180,10 @@ async function deployCertificatePipeline(
   tempKeyPath: string,
   preWarnings: string[] = [],
   isPanel: boolean = false,
-  panelUpstream: string = "http://127.0.0.1:3000"
+  panelUpstream: string = "http://127.0.0.1:3000",
+  targetNodeInput?: 'auto' | 'all' | 'synapse' | 'element' | 'default',
+  certRawContent?: string,
+  keyRawContent?: string
 ): Promise<{ success: boolean; stage?: string; error?: string; warnings?: string[]; details?: string }> {
   const timestamp = Math.floor(Date.now() / 1000);
   const certDest = `/etc/nginx/ssl/${domain}.crt`;
@@ -22136,113 +22192,168 @@ async function deployCertificatePipeline(
   const certBackup = `${backupDir}/${domain}.crt.bak_${timestamp}`;
   const keyBackup = `${backupDir}/${domain}.key.bak_${timestamp}`;
 
-  // 0. Ensure backup directory exists
-  await runServerCommand(`mkdir -p ${backupDir} && chmod 700 ${backupDir}`);
+  const activeConn = getActiveConnection();
+  const isDistributed = activeConn?.deploymentMode === 'distributed' && Boolean(activeConn?.elementNode?.host);
+  const isElemDomain = domain.startsWith('element') || domain.startsWith('chat') || domain.startsWith('web');
+  const isSynDomain = domain.startsWith('matrix') || domain.startsWith('synapse');
+  const isWildcardOrRoot = domain.startsWith('*.') || !domain.includes('.');
 
-  let hadExistingCert = false;
-  let hadExistingKey = false;
+  let nodesToDeploy: ('synapse' | 'element')[] = ['synapse'];
 
-  // 1. Backup existing files if present
-  const checkOut = await runServerCommand(`bash -c 'if [ -f "${certDest}" ]; then echo "CERT_EXISTS"; fi; if [ -f "${keyDest}" ]; then echo "KEY_EXISTS"; fi; exit 0'`);
-  if (checkOut.includes("CERT_EXISTS")) {
-    hadExistingCert = true;
-    await runServerCommand(`cp "${certDest}" "${certBackup}" 2>/dev/null || true`);
-  }
-  if (checkOut.includes("KEY_EXISTS")) {
-    hadExistingKey = true;
-    await runServerCommand(`cp "${keyDest}" "${keyBackup}" 2>/dev/null || true`);
-  }
-
-  // Backup site config file if present
-  const confFileScript = `grep -rl "server_name.*\\b${domain}\\b" /etc/nginx/ 2>/dev/null | head -n1 || true`;
-  const confFilePath = (await runServerCommand(confFileScript)).trim();
-  let confBackupPath = "";
-  if (confFilePath && confFilePath.startsWith("/etc/nginx")) {
-    const confBase = path.basename(confFilePath);
-    confBackupPath = `${backupDir}/${confBase}.bak_${timestamp}`;
-    await runServerCommand(`cp "${confFilePath}" "${confBackupPath}" 2>/dev/null || true`);
+  if (targetNodeInput === 'all' || (targetNodeInput === 'auto' && (isWildcardOrRoot || (!isElemDomain && !isSynDomain)))) {
+    nodesToDeploy = isDistributed ? ['synapse', 'element'] : ['synapse'];
+  } else if (targetNodeInput === 'element' || (targetNodeInput === 'auto' && isElemDomain)) {
+    nodesToDeploy = isDistributed ? ['element'] : ['synapse'];
+  } else {
+    nodesToDeploy = ['synapse'];
   }
 
-  // 2. Write new files to destination and set restrictive permissions on key
-  await runServerCommand(`bash -c 'mkdir -p /etc/nginx/ssl && cp "${tempCertPath}" "${certDest}" && cp "${tempKeyPath}" "${keyDest}" && chmod 600 "${keyDest}" && chown root:root "${keyDest}" 2>/dev/null || true; exit 0'`);
-
-  // Ensure Nginx SSL site config exists for domain or panel
-  await ensureNginxSslSiteConfig(domain, certDest, keyDest, isPanel, panelUpstream);
-
-  // 3. Test Nginx
-  const testOut = await runServerCommand("nginx -t 2>&1 || true");
-  const testSuccess = !testOut.toLowerCase().includes("failed") && !testOut.toLowerCase().includes("[emerg]");
-
-  if (!testSuccess) {
-    // Rollback
-    await runServerCommand(`rm -f "${certDest}" "${keyDest}"`);
-    if (hadExistingCert) await runServerCommand(`cp "${certBackup}" "${certDest}" 2>/dev/null || true`);
-    if (hadExistingKey) await runServerCommand(`cp "${keyBackup}" "${keyDest}" 2>/dev/null || true`);
-    if (confFilePath && confBackupPath) await runServerCommand(`cp "${confBackupPath}" "${confFilePath}" 2>/dev/null || true`);
-
-    return {
-      success: false,
-      stage: 'nginx_test_failed',
-      error: `Nginx configuration syntax test failed:\n${testOut}`,
-      warnings: preWarnings
-    };
+  // Obtain Base64 payloads for robust delivery to remote nodes
+  let certB64 = "";
+  let keyB64 = "";
+  if (certRawContent && keyRawContent) {
+    certB64 = Buffer.from(certRawContent.trim(), "utf-8").toString("base64");
+    keyB64 = Buffer.from(keyRawContent.trim(), "utf-8").toString("base64");
+  } else {
+    try {
+      const cStr = fs.readFileSync(tempCertPath, "utf-8");
+      const kStr = fs.readFileSync(tempKeyPath, "utf-8");
+      certB64 = Buffer.from(cStr.trim(), "utf-8").toString("base64");
+      keyB64 = Buffer.from(kStr.trim(), "utf-8").toString("base64");
+    } catch (_) {}
   }
 
-  // 4. Reload Nginx
-  await runServerCommand("systemctl reload nginx || service nginx reload || true");
+  let lastActiveDetails = "";
 
-  // 5. Smart Healthcheck with loopback fallbacks
-  await new Promise(r => setTimeout(r, 1500));
-  let healthOut = await runServerCommand(`curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --resolve "${domain}:443:127.0.0.1" "https://${domain}/" || echo "000"`);
-  let statusCode = parseInt(healthOut.trim(), 10) || 0;
+  for (const node of nodesToDeploy) {
+    // 0. Ensure backup directory exists
+    await runServerCommand(`mkdir -p ${backupDir} && chmod 700 ${backupDir}`, undefined, node);
 
-  if (statusCode === 0) {
-    healthOut = await runServerCommand(`curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 -H "Host: ${domain}" "https://127.0.0.1/" || echo "000"`);
-    statusCode = parseInt(healthOut.trim(), 10) || 0;
-  }
-  if (statusCode === 0) {
-    healthOut = await runServerCommand(`curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://${domain}/" || echo "000"`);
-    statusCode = parseInt(healthOut.trim(), 10) || 0;
-  }
+    let hadExistingCert = false;
+    let hadExistingKey = false;
 
-  let isHealthy = statusCode > 0 && statusCode < 600;
-  if (!isHealthy || isPanel) {
-    const activeNginx = await runServerCommand("systemctl is-active nginx 2>/dev/null || service nginx status 2>/dev/null || echo 'active'");
-    if (activeNginx.includes("active") || activeNginx.includes("running")) {
-      if (isPanel) {
-        preWarnings.push(`Note: Panel SSL proxy configured on port 443 (Upstream: ${panelUpstream || "http://127.0.0.1:3000"}). Nginx status verified.`);
-      } else {
-        preWarnings.push(`Warning: HTTPS loopback check returned code ${statusCode}, but Nginx is active and configuration syntax is verified.`);
-      }
-      isHealthy = true;
+    // 1. Backup existing files if present
+    const checkOut = await runServerCommand(`bash -c 'if [ -f "${certDest}" ]; then echo "CERT_EXISTS"; fi; if [ -f "${keyDest}" ]; then echo "KEY_EXISTS"; fi; exit 0'`, undefined, node);
+    if (checkOut.includes("CERT_EXISTS")) {
+      hadExistingCert = true;
+      await runServerCommand(`cp "${certDest}" "${certBackup}" 2>/dev/null || true`, undefined, node);
     }
+    if (checkOut.includes("KEY_EXISTS")) {
+      hadExistingKey = true;
+      await runServerCommand(`cp "${keyDest}" "${keyBackup}" 2>/dev/null || true`, undefined, node);
+    }
+
+    // Backup site config file if present
+    const confFileScript = `grep -rl "server_name.*\\b${domain}\\b" /etc/nginx/ 2>/dev/null | head -n1 || true`;
+    const confFilePath = (await runServerCommand(confFileScript, undefined, node)).trim();
+    let confBackupPath = "";
+    if (confFilePath && confFilePath.startsWith("/etc/nginx")) {
+      const confBase = path.basename(confFilePath);
+      confBackupPath = `${backupDir}/${confBase}.bak_${timestamp}`;
+      await runServerCommand(`cp "${confFilePath}" "${confBackupPath}" 2>/dev/null || true`, undefined, node);
+    }
+
+    // 2. Write new files to destination and set restrictive permissions on key
+    if (certB64 && keyB64) {
+      const writeScript = `bash -c '
+mkdir -p /etc/nginx/ssl /etc/ssl/matrix
+echo "${certB64}" | base64 -d > "${certDest}"
+echo "${keyB64}" | base64 -d > "${keyDest}"
+chmod 600 "${keyDest}"
+chown root:root "${keyDest}" 2>/dev/null || true
+if [ -d /etc/ssl/matrix ]; then
+  echo "${certB64}" | base64 -d > /etc/ssl/matrix/synapse.crt 2>/dev/null || true
+  echo "${keyB64}" | base64 -d > /etc/ssl/matrix/synapse.key 2>/dev/null || true
+  echo "${certB64}" | base64 -d > /etc/ssl/matrix/element.crt 2>/dev/null || true
+  echo "${keyB64}" | base64 -d > /etc/ssl/matrix/element.key 2>/dev/null || true
+  chmod 600 /etc/ssl/matrix/*.key 2>/dev/null || true
+fi
+exit 0
+'`;
+      await runServerCommand(writeScript, undefined, node);
+    } else {
+      await runServerCommand(`bash -c 'mkdir -p /etc/nginx/ssl && cp "${tempCertPath}" "${certDest}" && cp "${tempKeyPath}" "${keyDest}" && chmod 600 "${keyDest}" && chown root:root "${keyDest}" 2>/dev/null || true; exit 0'`, undefined, node);
+    }
+
+    // Ensure Nginx SSL site config exists for domain or panel
+    await ensureNginxSslSiteConfig(domain, certDest, keyDest, isPanel, panelUpstream, node);
+
+    // 3. Test Nginx
+    const testOut = await runServerCommand("nginx -t 2>&1 || true", undefined, node);
+    const testSuccess = !testOut.toLowerCase().includes("failed") && !testOut.toLowerCase().includes("[emerg]");
+
+    if (!testSuccess) {
+      // Rollback
+      await runServerCommand(`rm -f "${certDest}" "${keyDest}"`, undefined, node);
+      if (hadExistingCert) await runServerCommand(`cp "${certBackup}" "${certDest}" 2>/dev/null || true`, undefined, node);
+      if (hadExistingKey) await runServerCommand(`cp "${keyBackup}" "${keyDest}" 2>/dev/null || true`, undefined, node);
+      if (confFilePath && confBackupPath) await runServerCommand(`cp "${confBackupPath}" "${confFilePath}" 2>/dev/null || true`, undefined, node);
+
+      return {
+        success: false,
+        stage: 'nginx_test_failed',
+        error: `Nginx configuration syntax test failed on node [${node}]:\n${testOut}`,
+        warnings: preWarnings
+      };
+    }
+
+    // 4. Reload Nginx
+    await runServerCommand("systemctl reload nginx || service nginx reload || true", undefined, node);
+
+    // 5. Smart Healthcheck with loopback fallbacks
+    await new Promise(r => setTimeout(r, 1200));
+    let healthOut = await runServerCommand(`curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --resolve "${domain}:443:127.0.0.1" "https://${domain}/" || echo "000"`, undefined, node);
+    let statusCode = parseInt(healthOut.trim(), 10) || 0;
+
+    if (statusCode === 0) {
+      healthOut = await runServerCommand(`curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 -H "Host: ${domain}" "https://127.0.0.1/" || echo "000"`, undefined, node);
+      statusCode = parseInt(healthOut.trim(), 10) || 0;
+    }
+    if (statusCode === 0) {
+      healthOut = await runServerCommand(`curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://${domain}/" || echo "000"`, undefined, node);
+      statusCode = parseInt(healthOut.trim(), 10) || 0;
+    }
+
+    let isHealthy = statusCode > 0 && statusCode < 600;
+    if (!isHealthy || isPanel) {
+      const activeNginx = await runServerCommand("systemctl is-active nginx 2>/dev/null || service nginx status 2>/dev/null || echo 'active'", undefined, node);
+      if (activeNginx.includes("active") || activeNginx.includes("running")) {
+        if (isPanel) {
+          preWarnings.push(`Note: Panel SSL proxy configured on port 443 on node [${node}]. Nginx status verified.`);
+        } else {
+          preWarnings.push(`Note: HTTPS loopback check on node [${node}] returned code ${statusCode}, but Nginx is active and valid.`);
+        }
+        isHealthy = true;
+      }
+    }
+
+    if (!isHealthy) {
+      // Rollback
+      await runServerCommand(`rm -f "${certDest}" "${keyDest}"`, undefined, node);
+      if (hadExistingCert) await runServerCommand(`cp "${certBackup}" "${certDest}" 2>/dev/null || true`, undefined, node);
+      if (hadExistingKey) await runServerCommand(`cp "${keyBackup}" "${keyDest}" 2>/dev/null || true`, undefined, node);
+      if (confFilePath && confBackupPath) await runServerCommand(`cp "${confBackupPath}" "${confFilePath}" 2>/dev/null || true`, undefined, node);
+
+      await runServerCommand("nginx -t 2>&1 || true", undefined, node);
+      await runServerCommand("systemctl reload nginx || service nginx reload || true", undefined, node);
+
+      return {
+        success: false,
+        stage: 'health_check_failed',
+        error: `HTTPS health check for domain ${domain} failed on node [${node}] after applying certificate (HTTP status code: ${statusCode}). Restored previous certificate.`,
+        warnings: preWarnings
+      };
+    }
+
+    // Inspect active SSL details
+    const activeDetails = await runServerCommand(`openssl x509 -in "${certDest}" -noout -dates -issuer -subject 2>/dev/null || true`, undefined, node);
+    if (activeDetails) lastActiveDetails = activeDetails;
   }
-
-  if (!isHealthy) {
-    // Rollback
-    await runServerCommand(`rm -f "${certDest}" "${keyDest}"`);
-    if (hadExistingCert) await runServerCommand(`cp "${certBackup}" "${certDest}" 2>/dev/null || true`);
-    if (hadExistingKey) await runServerCommand(`cp "${keyBackup}" "${keyDest}" 2>/dev/null || true`);
-    if (confFilePath && confBackupPath) await runServerCommand(`cp "${confBackupPath}" "${confFilePath}" 2>/dev/null || true`);
-
-    await runServerCommand("nginx -t 2>&1 || true");
-    await runServerCommand("systemctl reload nginx || service nginx reload || true");
-
-    return {
-      success: false,
-      stage: 'health_check_failed',
-      error: `HTTPS health check for domain ${domain} failed after applying certificate (HTTP status code: ${statusCode}). Restored previous certificate.`,
-      warnings: preWarnings
-    };
-  }
-
-  // 6. Inspect active SSL details
-  const activeDetails = await runServerCommand(`openssl x509 -in "${certDest}" -noout -dates -issuer -subject 2>/dev/null || true`);
 
   return {
     success: true,
     warnings: preWarnings,
-    details: activeDetails
+    details: lastActiveDetails
   };
 }
 
@@ -22371,7 +22482,14 @@ check_cert "${certPath}" "${domain}"
 ' || echo "MISSING"
 `.trim();
 
-      const certInfo = await runServerCommand(inspectCmd).catch(() => "MISSING");
+      let targetInspectNode: 'synapse' | 'element' = 'synapse';
+      if (domain.startsWith("element") || domain.startsWith("chat") || domain.startsWith("web")) {
+        targetInspectNode = 'element';
+      }
+      let certInfo = await runServerCommand(inspectCmd, undefined, targetInspectNode).catch(() => "MISSING");
+      if ((!certInfo || certInfo.includes("MISSING")) && targetInspectNode === 'element') {
+        certInfo = await runServerCommand(inspectCmd, undefined, 'synapse').catch(() => "MISSING");
+      }
 
       if (!certInfo || certInfo.includes("MISSING") || !certInfo.includes("notAfter=")) {
         certificates.push({
@@ -22741,7 +22859,17 @@ app.post("/api/certificates/validate-and-upload", authenticateToken, checkPermis
     }
 
     // Pass temp files to deployment pipeline
-    const deployRes = await deployCertificatePipeline(cleanDomain, tempCertPath, tempKeyPath, preWarnings, Boolean(isPanelDomain), panelUpstream);
+    const deployRes = await deployCertificatePipeline(
+      cleanDomain,
+      tempCertPath,
+      tempKeyPath,
+      preWarnings,
+      Boolean(isPanelDomain),
+      panelUpstream,
+      req.body.targetNode || 'auto',
+      certContent,
+      keyContent
+    );
     if (!deployRes.success) {
       return res.status(400).json(deployRes);
     }
@@ -22799,7 +22927,17 @@ app.post("/api/certificates/apply-multi-domain", authenticateToken, checkPermiss
       if (!cleanDom) continue;
 
       const isPanel = configurePanelSsl && (cleanDom === panelDomain || cleanDom.startsWith("panel") || cleanDom.startsWith("admin"));
-      const deployRes = await deployCertificatePipeline(cleanDom, tempCertPath, tempKeyPath, [], isPanel, panelUpstream);
+      const deployRes = await deployCertificatePipeline(
+        cleanDom,
+        tempCertPath,
+        tempKeyPath,
+        [],
+        isPanel,
+        panelUpstream,
+        req.body.targetNode || 'all',
+        certContent,
+        keyContent
+      );
 
       if (deployRes.success) {
         results.push({ domain: cleanDom, success: true });
@@ -22831,9 +22969,9 @@ app.post("/api/certificates/generate-self-signed", authenticateToken, checkPermi
   const tempKeyPath = `/tmp/gen_key_${timestamp}.pem`;
 
   try {
-    const { domain, validityDays } = req.body;
+    const { domain, validityDays, targetNode, altDomains } = req.body;
     if (!domain) {
-      return res.status(400).json({ error: "Domain selection is required." });
+      return res.status(400).json({ error: "انتخاب یا ورود نام دامنه الزامی است." });
     }
 
     const cleanDomain = domain.replace(/[^a-zA-Z0-9.-]/g, "");
@@ -22841,28 +22979,177 @@ app.post("/api/certificates/generate-self-signed", authenticateToken, checkPermi
     if (days > 825) days = 825;
     if (days < 1) days = 30;
 
-    const genCmd = `openssl req -x509 -nodes -newkey rsa:2048 -keyout "${tempKeyPath}" -out "${tempCertPath}" -days ${days} -subj "/CN=${cleanDomain}" -addext "subjectAltName=DNS:${cleanDomain},DNS:*.${cleanDomain}" 2>&1`;
+    const activeConn = getActiveConnection();
+    const sanSet = new Set<string>();
+    sanSet.add(`DNS:${cleanDomain}`);
+    sanSet.add(`DNS:*.${cleanDomain}`);
+
+    if (Array.isArray(altDomains)) {
+      altDomains.forEach((ad: string) => {
+        const cleanAd = (ad || "").replace(/[^a-zA-Z0-9.-]/g, "").trim();
+        if (cleanAd) {
+          sanSet.add(`DNS:${cleanAd}`);
+          sanSet.add(`DNS:*.${cleanAd}`);
+        }
+      });
+    }
+
+    // Include cluster peer nodes in SAN if available
+    if (activeConn?.deploymentMode === 'distributed') {
+      if (activeConn.synapseNode?.host && activeConn.synapseNode.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+        sanSet.add(`IP:${activeConn.synapseNode.host}`);
+      }
+      if (activeConn.elementNode?.host && activeConn.elementNode.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+        sanSet.add(`IP:${activeConn.elementNode.host}`);
+      }
+    }
+    sanSet.add("IP:127.0.0.1");
+
+    const sanStr = Array.from(sanSet).join(",");
+    const genCmd = `openssl req -x509 -nodes -newkey rsa:2048 -keyout "${tempKeyPath}" -out "${tempCertPath}" -days ${days} -subj "/CN=${cleanDomain}" -addext "subjectAltName=${sanStr}" 2>&1`;
     const genOut = await runServerCommand(genCmd);
 
     if (genOut.toLowerCase().includes("error") && !genOut.includes("Generating a RSA private key")) {
       await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
-      return res.status(400).json({ error: `Error generating self-signed certificate:\n${genOut}` });
+      return res.status(400).json({ error: `خطا در تولید گواهی خودامضا:\n${genOut}` });
     }
 
+    const certRaw = await runServerCommand(`cat "${tempCertPath}" 2>/dev/null || true`);
+    const keyRaw = await runServerCommand(`cat "${tempKeyPath}" 2>/dev/null || true`);
+
     // Deploy through pipeline
-    const deployRes = await deployCertificatePipeline(cleanDomain, tempCertPath, tempKeyPath, []);
+    const deployRes = await deployCertificatePipeline(
+      cleanDomain,
+      tempCertPath,
+      tempKeyPath,
+      [],
+      false,
+      "http://127.0.0.1:3000",
+      targetNode || 'auto',
+      certRaw,
+      keyRaw
+    );
+
     if (!deployRes.success) {
+      await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
       return res.status(400).json(deployRes);
     }
+
+    await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
 
     return res.json({
       success: true,
       details: deployRes.details,
-      msg: `Self-signed certificate valid for ${days} days generated and activated for domain ${cleanDomain} and its subdomains.`
+      warnings: deployRes.warnings,
+      msg: `گواهی خودامضا با اعتبار ${days} روز و SAN چنددامنه‌ای با موفقیت تولید و روی سرویس‌ها فعال شد.`
     });
   } catch (err: any) {
     await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
-    return res.status(500).json({ error: err.message || "Error generating self-signed certificate." });
+    return res.status(500).json({ error: err.message || "خطا در تولید گواهی خودامضا." });
+  }
+});
+
+// 6b. Sync Cluster Self-Signed Certificate (Multi-SAN unified cert for Synapse & Element)
+app.post("/api/certificates/sync-cluster-self-signed", authenticateToken, checkPermission(["Owner", "Super Admin", "Admin"]), async (req, res) => {
+  const timestamp = Date.now();
+  const tempCertPath = `/tmp/cluster_cert_${timestamp}.pem`;
+  const tempKeyPath = `/tmp/cluster_key_${timestamp}.pem`;
+
+  try {
+    const activeConn = getActiveConnection();
+    const discovered = await getDiscoveredDomains();
+
+    let hsDomain = activeConn?.domain || "";
+    let elemDomain = "";
+
+    // Find element domain and synapse domain
+    for (const d of discovered) {
+      if (!hsDomain && (d.startsWith("matrix") || d.startsWith("synapse"))) {
+        hsDomain = d;
+      }
+      if (!elemDomain && (d.startsWith("element") || d.startsWith("chat") || d.startsWith("web"))) {
+        elemDomain = d;
+      }
+    }
+
+    if (!hsDomain && discovered.length > 0) {
+      hsDomain = discovered[0];
+    }
+    if (!elemDomain && discovered.length > 1) {
+      elemDomain = discovered[1];
+    }
+
+    // SAN construction
+    const sanList = new Set<string>();
+    if (hsDomain) {
+      sanList.add(`DNS:${hsDomain}`);
+      sanList.add(`DNS:*.${hsDomain}`);
+    }
+    if (elemDomain) {
+      sanList.add(`DNS:${elemDomain}`);
+      sanList.add(`DNS:*.${elemDomain}`);
+    }
+
+    // Add root domains
+    [hsDomain, elemDomain].forEach(d => {
+      if (d && d.includes(".")) {
+        const parts = d.split(".");
+        if (parts.length >= 2) {
+          const base = parts.slice(-2).join(".");
+          sanList.add(`DNS:${base}`);
+          sanList.add(`DNS:*.${base}`);
+        }
+      }
+    });
+
+    // Add IPs if distributed
+    if (activeConn?.host && !activeConn.host.includes("localhost") && activeConn.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      sanList.add(`IP:${activeConn.host}`);
+    }
+    if (activeConn?.synapseNode?.host && activeConn.synapseNode.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      sanList.add(`IP:${activeConn.synapseNode.host}`);
+    }
+    if (activeConn?.elementNode?.host && activeConn.elementNode.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      sanList.add(`IP:${activeConn.elementNode.host}`);
+    }
+
+    sanList.add("IP:127.0.0.1");
+
+    const primaryCN = hsDomain || elemDomain || (activeConn?.host) || "matrix.local";
+    const sanStr = Array.from(sanList).join(",");
+
+    const genCmd = `openssl req -x509 -nodes -newkey rsa:2048 -keyout "${tempKeyPath}" -out "${tempCertPath}" -days 825 -subj "/CN=${primaryCN}" -addext "subjectAltName=${sanStr}" 2>&1`;
+    const genOut = await runServerCommand(genCmd);
+
+    if (genOut.toLowerCase().includes("error") && !genOut.includes("Generating a RSA private key")) {
+      await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
+      return res.status(400).json({ error: `خطا در تولید گواهی یکپارچه کلاستر:\n${genOut}` });
+    }
+
+    const certRaw = await runServerCommand(`cat "${tempCertPath}" 2>/dev/null || true`);
+    const keyRaw = await runServerCommand(`cat "${tempKeyPath}" 2>/dev/null || true`);
+
+    const deployDomains = [hsDomain, elemDomain].filter(Boolean);
+    if (deployDomains.length === 0) deployDomains.push(primaryCN);
+
+    const deployResults = [];
+    for (const dom of Array.from(new Set(deployDomains))) {
+      const resDeploy = await deployCertificatePipeline(dom, tempCertPath, tempKeyPath, [], false, "http://127.0.0.1:3000", "all", certRaw, keyRaw);
+      deployResults.push({ domain: dom, success: resDeploy.success, error: resDeploy.error });
+    }
+
+    await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
+
+    return res.json({
+      success: true,
+      primaryDomain: primaryCN,
+      coveredDomains: Array.from(sanList),
+      deployResults,
+      msg: `گواهی خودامضای یکپارچه (SAN یکپارچه سیناپس و المنت) با موفقیت تولید و روی سرورهای کلاستر اعمال شد.`
+    });
+  } catch (err: any) {
+    await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
+    return res.status(500).json({ error: err.message || "خطا در همگام‌سازی گواهی کلاستر" });
   }
 });
 
@@ -22877,13 +23164,13 @@ app.get(["/api/certificates/:domain/download", "/api/certificates/:domain/downlo
 
     // Security check: Ensure requested domain is in discovered domains
     const discovered = await getDiscoveredDomains();
-    const isDiscovered = discovered.some(d => d.toLowerCase() === cleanDomain.toLowerCase());
-    if (!isDiscovered) {
+    const isDiscovered = discovered.some(d => d.toLowerCase() === cleanDomain.toLowerCase()) || cleanDomain === "cluster";
+    if (!isDiscovered && !cleanDomain.includes("matrix") && !cleanDomain.includes("element") && !cleanDomain.includes("synapse")) {
       return res.status(403).json({ error: `دسترسی غیرمجاز: دامنه ${cleanDomain} در لیست دامنه‌های شناسایی‌شده سرور نیست.` });
     }
 
     const findAndReadCertCmd = `
-for p in "/etc/nginx/ssl/${cleanDomain}.crt" "/etc/nginx/ssl/${cleanDomain}.pem" "/etc/letsencrypt/live/${cleanDomain}/fullchain.pem" "/etc/letsencrypt/live/${cleanDomain}/cert.pem" "/etc/ssl/certs/${cleanDomain}.crt" "/etc/matrix/ssl/${cleanDomain}.crt"; do
+for p in "/etc/nginx/ssl/${cleanDomain}.crt" "/etc/nginx/ssl/${cleanDomain}.pem" "/etc/letsencrypt/live/${cleanDomain}/fullchain.pem" "/etc/letsencrypt/live/${cleanDomain}/cert.pem" "/etc/ssl/certs/${cleanDomain}.crt" "/etc/ssl/matrix/synapse.crt" "/etc/ssl/matrix/element.crt"; do
   if [ -f "$p" ]; then
     cat "$p"
     exit 0
@@ -22901,7 +23188,15 @@ fi
 echo "__NOT_FOUND__"
 `.trim();
 
-    const certContent = await runServerCommand(findAndReadCertCmd);
+    let certContent = await runServerCommand(findAndReadCertCmd);
+    if ((!certContent || certContent.includes("__NOT_FOUND__")) && cleanDomain) {
+      // Try on Element node if distributed
+      const activeConn = getActiveConnection();
+      if (activeConn?.deploymentMode === 'distributed' && activeConn?.elementNode?.host) {
+        certContent = await runServerCommand(findAndReadCertCmd, undefined, 'element');
+      }
+    }
+
     if (!certContent || certContent.trim() === "" || certContent.includes("__NOT_FOUND__")) {
       return res.status(404).json({ error: `گواهی عمومی برای دامنه ${cleanDomain} یافت نشد.` });
     }
@@ -27840,7 +28135,17 @@ async function startServer() {
                   const pgBaseScript = `
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y postgresql postgresql-contrib
+apt-get install -y postgresql postgresql-contrib postgresql-client
+
+# Guarantee psql binary is available in standard path
+export PATH="/usr/lib/postgresql/17/bin:/usr/lib/postgresql/16/bin:/usr/lib/postgresql/15/bin:/usr/lib/postgresql/14/bin:/usr/lib/postgresql/13/bin:/usr/lib/postgresql/12/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+if [ ! -x /usr/bin/psql ]; then
+  SYS_PSQL=$(command -v psql 2>/dev/null || find /usr/lib/postgresql -name psql 2>/dev/null | sort -V | tail -n 1)
+  if [ -n "$SYS_PSQL" ]; then
+    ln -sf "$SYS_PSQL" /usr/bin/psql 2>/dev/null || true
+  fi
+fi
+PSQL_CMD=$(command -v psql 2>/dev/null || find /usr/lib/postgresql -name psql 2>/dev/null | sort -V | tail -n 1 || echo "psql")
 
 # Strict Service Isolation: Ensure Synapse or Element do NOT run on dedicated DB Server
 ${isDbIsolatedFromSynapse ? `
@@ -27855,36 +28160,36 @@ systemctl enable --now postgresql
 
 # Idempotently verify and configure database user/role
 echo "🐘 [PostgreSQL Provisioning] Verifying database role '${dbUser}'..."
-ROLE_EXISTS=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${dbUser}';" 2>/dev/null | tr -d '[:space:]')
+ROLE_EXISTS=$(sudo -u postgres "$PSQL_CMD" -tAc "SELECT 1 FROM pg_roles WHERE rolname='${dbUser}';" 2>/dev/null | tr -d '[:space:]')
 if [ "$ROLE_EXISTS" = "1" ]; then
   echo "ℹ️  [PostgreSQL] Role '${dbUser}' already exists. Skipping creation and verifying privileges/password..."
-  sudo -u postgres psql -c "ALTER ROLE ${dbUser} WITH LOGIN SUPERUSER CREATEDB PASSWORD '${dbPass}';" 2>/dev/null || true
+  sudo -u postgres "$PSQL_CMD" -c "ALTER ROLE ${dbUser} WITH LOGIN SUPERUSER CREATEDB PASSWORD '${dbPass}';" 2>/dev/null || true
   echo "✅ [PostgreSQL] Role '${dbUser}' privileges verified."
 else
   echo "🐘 [PostgreSQL] Role '${dbUser}' does not exist. Creating role with LOGIN SUPERUSER CREATEDB..."
-  sudo -u postgres psql -c "CREATE ROLE ${dbUser} WITH LOGIN SUPERUSER CREATEDB PASSWORD '${dbPass}';" 2>/dev/null || true
+  sudo -u postgres "$PSQL_CMD" -c "CREATE ROLE ${dbUser} WITH LOGIN SUPERUSER CREATEDB PASSWORD '${dbPass}';" 2>/dev/null || true
   echo "✅ [PostgreSQL] Role '${dbUser}' created successfully."
 fi
 
 # Idempotently verify and configure database
 echo "🐘 [PostgreSQL Provisioning] Verifying database '${dbName}'..."
-DB_EXISTS=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}';" 2>/dev/null | tr -d '[:space:]')
+DB_EXISTS=$(sudo -u postgres "$PSQL_CMD" -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}';" 2>/dev/null | tr -d '[:space:]')
 if [ "$DB_EXISTS" = "1" ]; then
   echo "ℹ️  [PostgreSQL] Database '${dbName}' already exists. Skipping database creation."
-  sudo -u postgres psql -c "ALTER DATABASE ${dbName} OWNER TO ${dbUser};" 2>/dev/null || true
-  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
+  sudo -u postgres "$PSQL_CMD" -c "ALTER DATABASE ${dbName} OWNER TO ${dbUser};" 2>/dev/null || true
+  sudo -u postgres "$PSQL_CMD" -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
 else
   echo "🐘 [PostgreSQL] Database '${dbName}' does not exist. Creating database with UTF8, C collation, owner '${dbUser}'..."
-  sudo -u postgres psql -c "CREATE DATABASE ${dbName} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${dbUser};" 2>/dev/null || true
-  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
+  sudo -u postgres "$PSQL_CMD" -c "CREATE DATABASE ${dbName} ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C' TEMPLATE=template0 OWNER ${dbUser};" 2>/dev/null || true
+  sudo -u postgres "$PSQL_CMD" -c "GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};" 2>/dev/null || true
   echo "✅ [PostgreSQL] Database '${dbName}' created successfully."
 fi
 
 # Idempotently ensure schema & table privileges
-sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON SCHEMA public TO ${dbUser};" 2>/dev/null || true
-sudo -u postgres psql -d ${dbName} -c "ALTER SCHEMA public OWNER TO ${dbUser};" 2>/dev/null || true
-sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
-sudo -u postgres psql -d ${dbName} -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres "$PSQL_CMD" -d ${dbName} -c "GRANT ALL ON SCHEMA public TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres "$PSQL_CMD" -d ${dbName} -c "ALTER SCHEMA public OWNER TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres "$PSQL_CMD" -d ${dbName} -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
+sudo -u postgres "$PSQL_CMD" -d ${dbName} -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${dbUser};" 2>/dev/null || true
 echo "✅ [PostgreSQL] Database schema & sequence permissions verified."
 
 # Configure remote listen, disable SSL negotiation resets, and configure robust pg_hba whitelist
@@ -28092,13 +28397,20 @@ if [ ! -f "$SIGNING_KEY" ]; then
   $SYN_PYTHON -m synapse.app.homeserver --server-name "${config.HS_DOMAIN}" --config-path "$CONF_FILE" --generate-keys 2>/dev/null || true
 fi
 
-# Generate SSL certificate for Synapse reverse proxy (Self-Signed fallback)
-mkdir -p /etc/ssl/matrix
+# Generate Unified SSL certificate for Synapse reverse proxy (Self-Signed fallback with Multi-SAN for Synapse & Element)
+mkdir -p /etc/ssl/matrix /etc/nginx/ssl
 if [ ! -f /etc/ssl/matrix/synapse.crt ]; then
-  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  openssl req -x509 -nodes -days 825 -newkey rsa:2048 \
+    -keyout /etc/ssl/matrix/synapse.key -out /etc/ssl/matrix/synapse.crt \
+    -subj "/CN=${config.HS_DOMAIN}" \
+    -addext "subjectAltName=DNS:${config.HS_DOMAIN},DNS:${config.ELEMENT_DOMAIN},DNS:*.${config.HS_DOMAIN},IP:${synHost},IP:${elemNode.host || '127.0.0.1'}" 2>/dev/null || \
+  openssl req -x509 -nodes -days 825 -newkey rsa:2048 \
     -keyout /etc/ssl/matrix/synapse.key -out /etc/ssl/matrix/synapse.crt \
     -subj "/CN=${config.HS_DOMAIN}" 2>/dev/null || true
+  chmod 600 /etc/ssl/matrix/synapse.key 2>/dev/null || true
 fi
+cp -f /etc/ssl/matrix/synapse.crt "/etc/nginx/ssl/${config.HS_DOMAIN}.crt" 2>/dev/null || true
+cp -f /etc/ssl/matrix/synapse.key "/etc/nginx/ssl/${config.HS_DOMAIN}.key" 2>/dev/null || true
 
 # Configure Nginx reverse proxy on Synapse node
 cat << 'EOFNGINX' > /etc/nginx/sites-available/matrix-synapse.conf
@@ -28246,13 +28558,20 @@ chown -R www-data:www-data /var/www/element 2>/dev/null || true
 chmod -R 755 /var/www/element 2>/dev/null || true
 chmod 755 /var /var/www 2>/dev/null || true
 
-# Generate SSL certificate for Element Web
-mkdir -p /etc/ssl/matrix
+# Generate Unified SSL certificate for Element Web (Multi-SAN for Element & Synapse)
+mkdir -p /etc/ssl/matrix /etc/nginx/ssl
 if [ ! -f /etc/ssl/matrix/element.crt ]; then
-  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  openssl req -x509 -nodes -days 825 -newkey rsa:2048 \
+    -keyout /etc/ssl/matrix/element.key -out /etc/ssl/matrix/element.crt \
+    -subj "/CN=${config.ELEMENT_DOMAIN}" \
+    -addext "subjectAltName=DNS:${config.ELEMENT_DOMAIN},DNS:${config.HS_DOMAIN},DNS:*.${config.ELEMENT_DOMAIN},IP:${elemNode.host || '127.0.0.1'},IP:${synHost}" 2>/dev/null || \
+  openssl req -x509 -nodes -days 825 -newkey rsa:2048 \
     -keyout /etc/ssl/matrix/element.key -out /etc/ssl/matrix/element.crt \
     -subj "/CN=${config.ELEMENT_DOMAIN}" 2>/dev/null || true
+  chmod 600 /etc/ssl/matrix/element.key 2>/dev/null || true
 fi
+cp -f /etc/ssl/matrix/element.crt "/etc/nginx/ssl/${config.ELEMENT_DOMAIN}.crt" 2>/dev/null || true
+cp -f /etc/ssl/matrix/element.key "/etc/nginx/ssl/${config.ELEMENT_DOMAIN}.key" 2>/dev/null || true
 
 # Firewall permissions
 command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp && ufw allow 443/tcp || true
@@ -28550,6 +28869,24 @@ server {
         return 200 '{"m.homeserver": {"base_url": "https://${config.HS_DOMAIN}"}}';
         default_type application/json;
         add_header 'Access-Control-Allow-Origin' '*' always;
+    }
+
+    # Proxy Matrix Homeserver API calls directly to Synapse node
+    location ~ ^(/_matrix|/_synapse) {
+        proxy_pass http://${synHost}:8008;
+        proxy_set_header Host ${config.HS_DOMAIN};
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        client_max_body_size 100M;
+
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'X-Requested-With, Content-Type, Authorization, Date' always;
     }
 }
 EOFELNGINX

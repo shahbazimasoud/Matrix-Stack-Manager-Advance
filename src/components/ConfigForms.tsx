@@ -2714,6 +2714,8 @@ export default function ConfigForms({
   const [selfSignedDomain, setSelfSignedDomain] = useState('');
   const [validityDaysInput, setValidityDaysInput] = useState('825');
   const [generatingSelfSigned, setGeneratingSelfSigned] = useState(false);
+  const [selfSignedTargetNode, setSelfSignedTargetNode] = useState<'auto' | 'all' | 'synapse' | 'element'>('all');
+  const [syncingClusterSsl, setSyncingClusterSsl] = useState(false);
   const [customDomainInput, setCustomDomainInput] = useState('');
 
   const fetchCertificatesData = async () => {
@@ -2921,7 +2923,8 @@ export default function ConfigForms({
         },
         body: JSON.stringify({
           domain: targetDomain,
-          validityDays: parseInt(validityDaysInput, 10) || 825
+          validityDays: parseInt(validityDaysInput, 10) || 825,
+          targetNode: selfSignedTargetNode
         })
       });
 
@@ -2938,6 +2941,37 @@ export default function ConfigForms({
       setCertError(err.message || 'خطا در ارتباط با سرور');
     } finally {
       setGeneratingSelfSigned(false);
+    }
+  };
+
+  const handleSyncClusterSsl = async () => {
+    setSyncingClusterSsl(true);
+    setCertError(null);
+    setCertSuccessMsg(null);
+    setCertWarnings([]);
+
+    try {
+      const res = await fetch('/api/certificates/sync-cluster-self-signed', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        }
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setCertError(data.error || 'خطا در همگام‌سازی گواهی کلاستر');
+        if (showToast) showToast('error', data.error || 'Failed to sync cluster SSL');
+      } else {
+        setCertSuccessMsg(data.msg || 'گواهی یکپارچه کلاستر (سیناپس و المنت) با موفقیت تولید و روی تمام سرورها نصب شد.');
+        if (showToast) showToast('success', lang === 'fa' ? 'گواهی یکپارچه کلاستر با موفقیت فعال شد' : 'Cluster SSL unified & deployed');
+        fetchCertificatesData();
+      }
+    } catch (err: any) {
+      setCertError(err.message || 'خطا در ارتباط با سرور');
+    } finally {
+      setSyncingClusterSsl(false);
     }
   };
 
@@ -10404,6 +10438,135 @@ export default function ConfigForms({
               >
                 {uploadingCert ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
                 <span>{lang === 'fa' ? 'تست، اعتبارسنجی و اعمال گواهی SSL (با پشتیبان‌گیری اتوماتیک)' : 'Validate & Apply SSL Certificate (With Auto-Backup & Rollback)'}</span>
+              </button>
+            </form>
+
+            {/* Section 3: One-Click Unified Cluster SSL Sync (Synapse & Element Web) */}
+            <div className={`p-5 rounded-2xl border transition-all space-y-4 ${
+              isLightMode 
+                ? 'bg-gradient-to-br from-indigo-50/70 via-white to-cyan-50/50 border-indigo-200/80 shadow-sm' 
+                : 'bg-gradient-to-br from-indigo-950/40 via-slate-900/60 to-cyan-950/20 border-indigo-500/30'
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 rounded-xl ${
+                    isLightMode ? 'bg-indigo-600 text-white shadow-md' : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                  }`}>
+                    <Layers className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className={`text-sm font-bold ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+                      {lang === 'fa' ? 'همگام‌سازی و تولید گواهی یکپارچه کلاستر (Multi-SAN)' : 'Unified Cluster SSL Synchronization (Multi-SAN)'}
+                    </h3>
+                    <p className={`text-xs ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                      {lang === 'fa' 
+                        ? 'تولید خودکار گواهی معتبر با پوشش همزمان دامنه‌های سیناپس و المنت وب جهت رفع خطای عدم دسترسی و گواهی متناقض در سرورهای مجزا' 
+                        : 'Auto-generate unified Multi-SAN certificate covering both Synapse & Element Web nodes to eliminate cross-node SSL mismatch.'}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSyncClusterSsl}
+                  disabled={syncingClusterSsl}
+                  className={`px-5 py-2.5 rounded-xl text-xs font-bold text-white transition flex items-center justify-center gap-2 cursor-pointer shadow-md shrink-0 active:scale-95 disabled:opacity-50 ${
+                    isLightMode
+                      ? 'bg-cyan-600 hover:bg-cyan-700 shadow-cyan-600/20'
+                      : 'bg-cyan-500/30 hover:bg-cyan-500/40 text-cyan-200 border border-cyan-500/40'
+                  }`}
+                >
+                  {syncingClusterSsl ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  <span>{lang === 'fa' ? 'همگام‌سازی و اعمال گواهی روی تمام نودها' : 'Sync & Deploy Across Cluster'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Section 4: Self-Signed Certificate Generator */}
+            <form 
+              onSubmit={handleGenerateSelfSigned}
+              className={`p-5 rounded-2xl border transition-all space-y-4 ${
+                isLightMode ? 'bg-white border-slate-200/80 shadow-sm' : 'bg-slate-900/60 border-white/10'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${
+                  isLightMode ? 'bg-amber-500 text-white shadow-md' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}>
+                  <Key className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className={`text-sm font-bold ${isLightMode ? 'text-slate-900' : 'text-white'}`}>
+                    {lang === 'fa' ? 'تولید اختصاصی گواهی خودامضا (Self-Signed Generator)' : 'Generate Dedicated Self-Signed Certificate'}
+                  </h3>
+                  <p className={`text-xs ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {lang === 'fa' 
+                      ? 'تولید کلید خصوصی RSA 2048 و گواهی x509 با اعتبار مشخص برای هر دامنه یا ساب‌دامنه' 
+                      : 'Generate RSA 2048-bit private key and x509 certificate with customizable validity.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-200'}`}>
+                    {lang === 'fa' ? 'دامنه هدف:' : 'Target Domain:'}
+                  </label>
+                  <select
+                    value={selfSignedDomain}
+                    onChange={(e) => setSelfSignedDomain(e.target.value)}
+                    className={`w-full p-2.5 rounded-xl border text-xs font-mono font-bold focus:outline-none transition ${
+                      isLightMode ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-700 text-white'
+                    }`}
+                  >
+                    {certDomains.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-200'}`}>
+                    {lang === 'fa' ? 'مدت اعتبار (روز):' : 'Validity (Days):'}
+                  </label>
+                  <input
+                    type="number"
+                    min="30"
+                    max="825"
+                    value={validityDaysInput}
+                    onChange={(e) => setValidityDaysInput(e.target.value)}
+                    className={`w-full p-2.5 rounded-xl border text-xs font-mono focus:outline-none transition ${
+                      isLightMode ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-700 text-white'
+                    }`}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-200'}`}>
+                    {lang === 'fa' ? 'نود مقصد در استقرار توزیع‌شده:' : 'Target Node Deployment:'}
+                  </label>
+                  <select
+                    value={selfSignedTargetNode}
+                    onChange={(e: any) => setSelfSignedTargetNode(e.target.value)}
+                    className={`w-full p-2.5 rounded-xl border text-xs font-bold focus:outline-none transition ${
+                      isLightMode ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-700 text-white'
+                    }`}
+                  >
+                    <option value="all">{lang === 'fa' ? 'تمام سرورها (کلاستر کامل)' : 'All Nodes (Full Cluster)'}</option>
+                    <option value="auto">{lang === 'fa' ? 'تشخیص خودکار بر اساس نام دامنه' : 'Auto Detect by Domain'}</option>
+                    <option value="synapse">{lang === 'fa' ? 'فقط سرور سیناپس (Synapse)' : 'Synapse Node Only'}</option>
+                    <option value="element">{lang === 'fa' ? 'فقط سرور المنت وب (Element Web)' : 'Element Web Node Only'}</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={generatingSelfSigned}
+                className="w-full py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-amber-600/25 disabled:opacity-50 cursor-pointer"
+              >
+                {generatingSelfSigned ? <Loader2 className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
+                <span>{lang === 'fa' ? 'تولید و فعال‌سازی گواهی خودامضا' : 'Generate & Activate Self-Signed Certificate'}</span>
               </button>
             </form>
           </div>

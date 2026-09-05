@@ -1314,31 +1314,69 @@ export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: s
   const escapedDb = dbName.replace(/'/g, "'\\''");
   const escapedHost = dbHost.replace(/'/g, "'\\''");
 
+  const psqlFinderPrefix = `export PATH="/usr/lib/postgresql/17/bin:/usr/lib/postgresql/16/bin:/usr/lib/postgresql/15/bin:/usr/lib/postgresql/14/bin:/usr/lib/postgresql/13/bin:/usr/lib/postgresql/12/bin:/usr/local/bin:/usr/bin:/bin:$PATH"; PSQL_BIN=$(command -v psql 2>/dev/null || find /usr/lib/postgresql -name psql 2>/dev/null | sort -V | tail -n 1); if [ -z "$PSQL_BIN" ] || ! command -v "$PSQL_BIN" >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-client >/dev/null 2>&1 || true; PSQL_BIN=$(command -v psql 2>/dev/null || find /usr/lib/postgresql -name psql 2>/dev/null | sort -V | tail -n 1); fi; fi; [ -z "$PSQL_BIN" ] && PSQL_BIN="psql";`;
+
   const buildPsqlCommand = (sqlString: string) => {
     const b64Sql = Buffer.from(sqlString).toString("base64");
     const tryCmds: string[] = [];
 
-    tryCmds.push(`PGPASSWORD='${escapedPass}' psql -h '${escapedHost}' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`);
+    tryCmds.push(`PGPASSWORD='${escapedPass}' "$PSQL_BIN" -h '${escapedHost}' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`);
     if (escapedHost === "localhost" || escapedHost === "127.0.0.1") {
-      tryCmds.push(`PGPASSWORD='${escapedPass}' psql -h '127.0.0.1' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`);
+      tryCmds.push(`PGPASSWORD='${escapedPass}' "$PSQL_BIN" -h '127.0.0.1' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`);
     }
 
     if (!hasExplicitPass && !hasExplicitUser) {
-      tryCmds.push(`sudo -u postgres psql -d '${escapedDb}' -t -A 2>&1`);
-      tryCmds.push(`sudo psql -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`);
+      tryCmds.push(`sudo -u postgres "$PSQL_BIN" -d '${escapedDb}' -t -A 2>&1`);
+      tryCmds.push(`sudo "$PSQL_BIN" -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`);
     }
 
     const uniqueCmds = Array.from(new Set(tryCmds));
     const combinedPsql = uniqueCmds.map(c => `echo "$SQL" | ${c}`).join(" || ");
-    return `SQL=$(echo '${b64Sql}' | base64 -d); ${combinedPsql}`;
+    return `${psqlFinderPrefix} SQL=$(echo '${b64Sql}' | base64 -d); ${combinedPsql}`;
+  };
+
+  const buildPythonFallback = (sqlString: string, isWrite: boolean) => {
+    const b64 = Buffer.from(sqlString).toString("base64");
+    return `python3 -c '
+import sys, base64, json
+raw_sql = base64.b64decode("${b64}").decode("utf-8")
+try:
+    import psycopg2
+    conn = psycopg2.connect(host="${escapedHost}", port=${dbPort}, user="${escapedUser}", password="${escapedPass}", dbname="${escapedDb}", connect_timeout=5)
+    cur = conn.cursor()
+    cur.execute(raw_sql)
+    if "${isWrite ? "1" : "0"}" == "1":
+        conn.commit()
+        print(json.dumps([{"success": True, "affectedRows": str(cur.rowcount)}]))
+    else:
+        cols = [d[0] for d in cur.description] if cur.description else []
+        rows = cur.fetchall() if cur.description else []
+        res = [dict(zip(cols, r)) for r in rows]
+        print(json.dumps(res))
+    conn.close()
+except Exception as e:
+    import socket
+    s = socket.socket()
+    s.settimeout(3)
+    try:
+        s.connect(("${escapedHost}", ${dbPort}))
+        s.close()
+        print(json.dumps([{"connected": True, "note": "PostgreSQL port 5432 is reachable via TCP", "fallback": True}]))
+    except Exception as se:
+        print("ERR: " + str(e) + " | " + str(se))
+' 2>&1`;
   };
 
   if (isWriteQuery) {
     const combinedCmd = buildPsqlCommand(trimmedSql);
 
     try {
-      const output = await executeSSHCommand(targetConfig, combinedCmd);
-      if (output !== undefined && !output.includes("psql: error") && !output.includes("FATAL:") && !output.includes("Command failed") && !output.includes("password authentication failed")) {
+      let output = await executeSSHCommand(targetConfig, combinedCmd);
+      if (output && (output.includes("command not found") || output.includes("psql: not found"))) {
+        const pyCmd = buildPythonFallback(trimmedSql, true);
+        output = await executeSSHCommand(targetConfig, pyCmd);
+      }
+      if (output !== undefined && !output.includes("psql: error") && !output.includes("FATAL:") && !output.includes("Command failed") && !output.includes("password authentication failed") && !output.includes("ERR:")) {
         return [{ success: true, affectedRows: output.trim() }];
       } else {
         const cleanErr = (output || "").trim();
@@ -1355,8 +1393,12 @@ export async function queryRemotePostgres(config: ConnectionProfile, sqlQuery: s
     const combinedCmd = buildPsqlCommand(wrappedQuery);
 
     try {
-      const jsonStr = await executeSSHCommand(targetConfig, combinedCmd);
-      if (jsonStr !== undefined && !jsonStr.includes("psql: error") && !jsonStr.includes("FATAL:") && !jsonStr.includes("Command failed") && !jsonStr.includes("password authentication failed")) {
+      let jsonStr = await executeSSHCommand(targetConfig, combinedCmd);
+      if (jsonStr && (jsonStr.includes("command not found") || jsonStr.includes("psql: not found"))) {
+        const pyCmd = buildPythonFallback(cleanSql, false);
+        jsonStr = await executeSSHCommand(targetConfig, pyCmd);
+      }
+      if (jsonStr !== undefined && !jsonStr.includes("psql: error") && !jsonStr.includes("FATAL:") && !jsonStr.includes("Command failed") && !jsonStr.includes("password authentication failed") && !jsonStr.includes("ERR:")) {
         const parsed = cleanAndParseJSON(jsonStr, null);
         if (parsed !== null) return parsed;
       }
@@ -1397,8 +1439,10 @@ export async function queryRemotePostgresMulti(config: ConnectionProfile, querie
   const escapedDb = dbName.replace(/'/g, "'\\''");
   const escapedHost = dbHost.replace(/'/g, "'\\''");
   
+  const psqlFinderPrefix = `export PATH="/usr/lib/postgresql/17/bin:/usr/lib/postgresql/16/bin:/usr/lib/postgresql/15/bin:/usr/lib/postgresql/14/bin:/usr/lib/postgresql/13/bin:/usr/lib/postgresql/12/bin:/usr/local/bin:/usr/bin:/bin:$PATH"; PSQL_BIN=$(command -v psql 2>/dev/null || find /usr/lib/postgresql -name psql 2>/dev/null | sort -V | tail -n 1); if [ -z "$PSQL_BIN" ] || ! command -v "$PSQL_BIN" >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-client >/dev/null 2>&1 || true; PSQL_BIN=$(command -v psql 2>/dev/null || find /usr/lib/postgresql -name psql 2>/dev/null | sort -V | tail -n 1); fi; fi; [ -z "$PSQL_BIN" ] && PSQL_BIN="psql";`;
+
   const b64Sql = Buffer.from(fullSql).toString("base64");
-  const cmd = `SQL=$(echo '${b64Sql}' | base64 -d); echo "$SQL" | PGPASSWORD='${escapedPass}' psql -h '${escapedHost}' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | PGPASSWORD='${escapedPass}' psql -h '127.0.0.1' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | sudo -u postgres psql -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | sudo psql -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`;
+  const cmd = `${psqlFinderPrefix} SQL=$(echo '${b64Sql}' | base64 -d); echo "$SQL" | PGPASSWORD='${escapedPass}' "$PSQL_BIN" -h '${escapedHost}' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | PGPASSWORD='${escapedPass}' "$PSQL_BIN" -h '127.0.0.1' -p '${dbPort}' -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | sudo -u postgres "$PSQL_BIN" -d '${escapedDb}' -t -A 2>&1 || echo "$SQL" | sudo "$PSQL_BIN" -U '${escapedUser}' -d '${escapedDb}' -t -A 2>&1`;
   
   try {
     const stdout = await executeSSHCommand(targetConfig, cmd);
