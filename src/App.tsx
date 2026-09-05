@@ -698,6 +698,8 @@ export default function App() {
   const elementWsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const motherWsConnIdRef = useRef<string | null>(null);
+  const motherWsTokenRef = useRef<string | null>(null);
 
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const wsConnected = connectionStatus === 'connected';
@@ -862,9 +864,25 @@ export default function App() {
     }
   }, [activeConnection?.id, activeConnection?.deploymentMode]);
 
-  // Unified rock-solid WebSocket setup for telemetry, metrics, and multi-server diagnostics
-  const setupWebSocket = (token: string) => {
+  // Unified rock-solid "Mother" WebSocket setup for telemetry, metrics, and multi-server diagnostics
+  const setupWebSocket = (token: string, forceReconnect: boolean = false) => {
     if (!token || token === 'null' || token === 'undefined') return;
+
+    const connId = activeConnection?.id || 'local';
+
+    // Singleton check: If mother WebSocket is already active or connecting for this token & connection, DO NOT create a new one!
+    if (
+      !forceReconnect &&
+      wsRef.current &&
+      (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) &&
+      motherWsConnIdRef.current === connId &&
+      motherWsTokenRef.current === token
+    ) {
+      return;
+    }
+
+    motherWsConnIdRef.current = connId;
+    motherWsTokenRef.current = token;
 
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -882,7 +900,6 @@ export default function App() {
       wsRef.current = null;
     }
 
-    const connId = activeConnection?.id;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}${connId ? `&connId=${encodeURIComponent(connId)}` : ''}`;
     
@@ -894,7 +911,8 @@ export default function App() {
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      console.log("Matrix Admin Panel WebSocket connected.");
+      console.log("Matrix Admin Panel Mother WebSocket connected.");
+      (window as any).__matrixMotherWs = ws;
       setConnectionStatus('connected');
       setWsConnected(true);
       window.dispatchEvent(new CustomEvent('matrix_socket_status', { detail: { connected: true } }));
@@ -1017,7 +1035,10 @@ export default function App() {
     };
 
     ws.onclose = () => {
-      console.log("WebSocket closed. Scheduling reconnect in 4s...");
+      console.log("Mother WebSocket closed. Scheduling reconnect in 4s...");
+      if ((window as any).__matrixMotherWs === ws) {
+        (window as any).__matrixMotherWs = null;
+      }
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = null;

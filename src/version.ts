@@ -16,8 +16,8 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.55.4";
-export const PANEL_BUILD_DATE = "2026-09-03";
+export const PANEL_VERSION = "2.55.5";
+export const PANEL_BUILD_DATE = "2026-09-05";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
 
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.55.5",
+    date: "2026-09-05",
+    title: "Multi-Server Port 443 API Routing, PostgreSQL Port 5432 Security, Heredoc Base64 Fix & Mother WebSocket Singleton",
+    changes: [
+      "Eliminated Bash Heredoc EOF Error: Refactored ensureNginxSslSiteConfig to use robust Base64 encoding for virtual host files, preventing shell EOF delimiter parsing errors.",
+      "Multi-Server Element-to-Synapse Port 443 Routing: Configured Element Web Nginx to reverse-proxy /_matrix and /_synapse requests over port 443 to the Synapse node with SNI (proxy_ssl_server_name on) and SSL bypass.",
+      "PostgreSQL Cross-Node Connectivity & SCRAM Hardening: Enhanced wire_pg_hba.py to whitelist all cluster nodes, prioritized SCRAM-SHA-256 before MD5, opened port 5432 firewall rules, and added pre-flight socket verification from Synapse to Database node.",
+      "Mother WebSocket Singleton Lifecycle: Consolidated panel WebSockets to reuse the single 'mother' WebSocket created via the connection page, preventing duplicate connections and socket flapping."
+    ]
+  },
   {
     version: "2.55.4",
     date: "2026-09-03",

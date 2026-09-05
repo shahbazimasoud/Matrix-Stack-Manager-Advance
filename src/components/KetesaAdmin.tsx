@@ -992,6 +992,21 @@ export default function KetesaAdmin({
       return;
     }
 
+    // Reuse the mother WebSocket created via the connection page
+    const motherWs = (window as any).__matrixMotherWs;
+    if (motherWs && motherWs.readyState === WebSocket.OPEN) {
+      motherWs.send(JSON.stringify({
+        type: 'execute_command',
+        command: actualCommand,
+        args: {
+          mode: installerMode,
+          components: selectedComponents,
+          config: installerConfig
+        }
+      }));
+      return;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws?token=${authToken}`;
     const ws = new WebSocket(wsUrl);

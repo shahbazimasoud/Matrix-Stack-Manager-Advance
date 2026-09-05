@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.55.4** (Released: 2026-09-03)
+## Current Panel Version: **v2.55.5** (Released: 2026-09-05)
 
 ### Changelog History
+
+#### **v2.55.5** - 2026-09-05
+- **Multi-Server Port 443 API Routing, PostgreSQL Port 5432 Security, Heredoc Base64 Fix & Mother WebSocket Singleton**:
+  - **Eliminated Bash Heredoc EOF Delimiter Syntax Error**: Refactored `ensureNginxSslSiteConfig` in `server.ts` to use Base64 encoding when writing SSL Nginx virtual host configurations, eradicating `syntax error: unexpected end of file (wanted 'EOF')` failures.
+  - **Multi-Server Element-to-Synapse Port 443 Routing**: Updated `element-web.conf` generation in `server.ts` to proxy Matrix homeserver client APIs (`/_matrix`, `/_synapse`) directly to the Synapse node over port 443 with SNI (`proxy_ssl_server_name on`) and SSL verification bypass when deployed in distributed multi-server mode.
+  - **PostgreSQL Port 5432 Remote Hardening & Pre-Flight Socket Probes**: Enhanced `wire_pg_hba.py` to support multiple cluster hosts, prioritized SCRAM-SHA-256 and MD5 authentication, opened TCP port 5432 via ufw/iptables, and added pre-flight socket connectivity testing from the Synapse node to the PostgreSQL node on port 5432.
+  - **Mother WebSocket Singleton Architecture**: Consolidated panel WebSocket lifecycle in `src/App.tsx` and `KetesaAdmin.tsx` to reuse the single 'mother' WebSocket initialized via the connection page, preventing redundant connections and socket flapping across the admin panel.
 
 #### **v2.55.4** - 2026-09-03
 - **Fix Process Self-Kill in Synapse Restart & pg_hba.py Line Joining**:

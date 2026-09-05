@@ -1157,21 +1157,64 @@ async function checkSynapseNodeApi(targetConnInput?: any): Promise<any> {
   
   try {
     if (activeConn && activeConn.id !== 'local') {
-      const synHost = activeConn.synapseNode?.host || activeConn.host;
-      const cmd = `curl -s -m 4 http://127.0.0.1:${synPort}/_matrix/client/versions || curl -s -m 4 http://localhost:${synPort}/_matrix/client/versions || true`;
+      const synHost = activeConn.synapseNode?.host || activeConn.host || '127.0.0.1';
+      const cmd = `
+echo "---BEGIN_8008---"
+curl -s -m 4 http://127.0.0.1:${synPort}/_matrix/client/versions || true
+echo "---BEGIN_443---"
+curl -k -s -m 4 https://127.0.0.1:443/_matrix/client/versions || true
+`;
       const res = await executeSSHCommand(activeConn, cmd, "synapse");
       const latencyMs = Date.now() - t0;
-      let parsed: any = null;
-      try {
-        parsed = JSON.parse(res.trim());
-      } catch (e) {
-        const match = res.match(/\{[\s\S]*\}/);
-        if (match) {
-          try { parsed = JSON.parse(match[0]); } catch (e2) {}
+      
+      let res8008 = "";
+      let res443 = "";
+      if (res.includes("---BEGIN_8008---") && res.includes("---BEGIN_443---")) {
+        const parts = res.split("---BEGIN_443---");
+        res8008 = parts[0].replace("---BEGIN_8008---", "").trim();
+        res443 = (parts[1] || "").trim();
+      } else {
+        res8008 = res.trim();
+      }
+
+      const parseVersions = (raw: string) => {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && (parsed.versions || parsed.unstable_features)) return parsed;
+        } catch (_) {
+          const match = raw.match(/\{[\s\S]*\}/);
+          if (match) {
+            try {
+              const p2 = JSON.parse(match[0]);
+              if (p2 && (p2.versions || p2.unstable_features)) return p2;
+            } catch (__) {}
+          }
+        }
+        return null;
+      };
+
+      const parsed8008 = parseVersions(res8008);
+      const parsed443 = parseVersions(res443);
+      const parsed = parsed8008 || parsed443;
+
+      // In distributed multi-server mode, probe Element Web node's ability to reach Synapse on port 443
+      let elementToSynapse: any = null;
+      if (activeConn.deploymentMode === 'distributed' && activeConn.elementNode?.host && synHost !== '127.0.0.1') {
+        try {
+          const elemProbeCmd = `curl -k -s -m 4 https://${synHost}:443/_matrix/client/versions 2>&1 || true`;
+          const elemProbeRes = await executeSSHCommand(activeConn, elemProbeCmd, "element");
+          const elemParsed = parseVersions(elemProbeRes);
+          if (elemParsed) {
+            elementToSynapse = { ok: true, target: synHost, port: 443, details: 'Element node can reach Synapse via port 443' };
+          } else {
+            elementToSynapse = { ok: false, target: synHost, port: 443, error: elemProbeRes.slice(0, 120) || 'Port 443 unreachable from Element node' };
+          }
+        } catch (e: any) {
+          elementToSynapse = { ok: false, target: synHost, port: 443, error: e.message || 'SSH probe from Element node failed' };
         }
       }
 
-      if (parsed && (parsed.versions || parsed.unstable_features)) {
+      if (parsed) {
         return {
           role: 'synapse',
           ok: true,
@@ -1180,6 +1223,9 @@ async function checkSynapseNodeApi(targetConnInput?: any): Promise<any> {
           versions: parsed.versions || [],
           serverVersion: parsed.server_version || undefined,
           adminOk: true,
+          port8008Ok: !!parsed8008,
+          port443SslOk: !!parsed443,
+          elementToSynapse,
           timestamp: new Date().toISOString()
         };
       } else {
@@ -1188,7 +1234,8 @@ async function checkSynapseNodeApi(targetConnInput?: any): Promise<any> {
           ok: false,
           serviceName: `Synapse Matrix API (:${synPort})`,
           latencyMs,
-          error: res.trim() ? `Unexpected API response: ${res.slice(0, 100)}` : `Port ${synPort} not responding on Synapse node`,
+          error: res8008 ? `Unexpected API response: ${res8008.slice(0, 100)}` : `Port ${synPort} not responding on Synapse node`,
+          elementToSynapse,
           timestamp: new Date().toISOString()
         };
       }
@@ -1202,6 +1249,8 @@ async function checkSynapseNodeApi(targetConnInput?: any): Promise<any> {
         versions: ['v1.1', 'v1.2', 'v1.3', 'v1.4', 'v1.5', 'v1.6', 'v1.7', 'v1.8', 'v1.9', 'v1.10', 'v1.11'],
         serverVersion: '1.115.0',
         adminOk: true,
+        port8008Ok: true,
+        port443SslOk: true,
         timestamp: new Date().toISOString()
       };
     }
@@ -1225,11 +1274,42 @@ async function checkDatabaseNodeHealth(targetConnInput?: any): Promise<any> {
 
   try {
     if (activeConn && activeConn.id !== 'local') {
+      // 1. Direct query from Panel to Database node
       const rows = await queryRemotePostgres(activeConn, "SELECT 1 as connected, current_database() as db_name, version() as version;");
       const latencyMs = Date.now() - t0;
-      const isConnected = rows && rows[0] && rows[0].connected === 1;
+      const isPanelConnected = rows && rows[0] && rows[0].connected === 1;
 
-      if (isConnected) {
+      // 2. Multi-Server: Check if Synapse server can reach Database on port 5432
+      let synapseToDb: any = null;
+      if (activeConn.deploymentMode === 'distributed' && activeConn.synapseNode?.host) {
+        const dbHost = activeConn.databaseNode?.host || activeConn.dbHost || '127.0.0.1';
+        try {
+          const synProbe = `python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(4)
+try:
+    s.connect(('${dbHost}', ${dbPort}))
+    s.close()
+    print('SYN_TO_DB_OK')
+except Exception as e:
+    print('SYN_TO_DB_FAIL:' + str(e))
+" 2>&1 || true`;
+          const synRes = await executeSSHCommand(activeConn, synProbe, "synapse");
+          if (synRes.includes('SYN_TO_DB_OK')) {
+            synapseToDb = { ok: true, host: dbHost, port: dbPort, details: 'Synapse node connected to PostgreSQL successfully' };
+          } else {
+            const errDetails = synRes.replace('SYN_TO_DB_FAIL:', '').trim() || 'Port 5432 unreachable';
+            synapseToDb = { ok: false, host: dbHost, port: dbPort, error: `Synapse node cannot reach Database (${dbHost}:${dbPort}): ${errDetails}` };
+          }
+        } catch (e: any) {
+          synapseToDb = { ok: false, host: dbHost, port: dbPort, error: e.message || 'Synapse SSH probe failed' };
+        }
+      }
+
+      const allDbOk = isPanelConnected && (!synapseToDb || synapseToDb.ok);
+
+      if (isPanelConnected) {
         let activeUsers = 0;
         let publicRoomsCount = 0;
         let privateRoomsCount = 0;
@@ -1257,11 +1337,14 @@ async function checkDatabaseNodeHealth(targetConnInput?: any): Promise<any> {
 
         return {
           role: 'database',
-          ok: true,
+          ok: allDbOk,
           serviceName: `PostgreSQL (:${dbPort})`,
           databaseName: rows[0].db_name || dbName,
           version: rows[0].version ? String(rows[0].version).split(' ')[0] + ' ' + String(rows[0].version).split(' ')[1] : 'PostgreSQL 16',
           latencyMs,
+          panelToDb: { ok: isPanelConnected, latencyMs },
+          synapseToDb,
+          error: synapseToDb && !synapseToDb.ok ? synapseToDb.error : undefined,
           stats: {
             activeUsers,
             publicRoomsCount,
@@ -1277,6 +1360,8 @@ async function checkDatabaseNodeHealth(targetConnInput?: any): Promise<any> {
           ok: false,
           serviceName: `PostgreSQL (:${dbPort})`,
           latencyMs,
+          panelToDb: { ok: false, latencyMs },
+          synapseToDb,
           error: "Database node returned invalid handshake response",
           timestamp: new Date().toISOString()
         };
@@ -1290,6 +1375,8 @@ async function checkDatabaseNodeHealth(targetConnInput?: any): Promise<any> {
         databaseName: dbName,
         version: 'PostgreSQL 16.2',
         latencyMs,
+        panelToDb: { ok: true, latencyMs },
+        synapseToDb: { ok: true, host: '127.0.0.1', port: dbPort, details: 'Local connection healthy' },
         stats: {
           activeUsers: 14,
           publicRoomsCount: 6,
@@ -21944,17 +22031,117 @@ async function ensureNginxSslSiteConfig(
     if (activeConn.domain) hsDomain = activeConn.domain;
   }
 
+  // Pre-generate configs in Base64 to avoid fragile heredocs and nested EOF syntax errors in shell strings
+  const panelNginxConf = `server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${cleanDomain};
+
+    ssl_certificate /etc/nginx/ssl/${cleanDomain}.crt;
+    ssl_certificate_key /etc/nginx/ssl/${cleanDomain}.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass ${cleanUpstream};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        client_max_body_size 100M;
+    }
+}
+`;
+
+  // For Element Web: Architecture specifies Element Web communicates with Synapse/Homeserver via port 443
+  // If distributed multi-server, proxy over port 443 with SSL SNI; if local, proxy to 8008 or 443
+  const isSynRemote = synHost !== "127.0.0.1" && synHost !== "localhost";
+  const elemProxyPass = isSynRemote ? `https://${synHost}:443` : `http://127.0.0.1:8008`;
+  const elemSslDirectives = isSynRemote ? `
+        proxy_ssl_server_name on;
+        proxy_ssl_verify off;` : '';
+
+  const elementNginxConf = `server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${cleanDomain};
+
+    ssl_certificate /etc/nginx/ssl/${cleanDomain}.crt;
+    ssl_certificate_key /etc/nginx/ssl/${cleanDomain}.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    root /var/www/element;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+
+    location = /config.json {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+
+    # Proxy Matrix Homeserver API calls directly to Synapse node via port 443
+    location ~ ^(/_matrix|/_synapse) {
+        proxy_pass ${elemProxyPass};${elemSslDirectives}
+        proxy_set_header Host ${hsDomain};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        client_max_body_size 100M;
+
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'X-Requested-With, Content-Type, Authorization, Date' always;
+    }
+}
+`;
+
+  const defaultSynapseNginxConf = `server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${cleanDomain};
+
+    ssl_certificate /etc/nginx/ssl/${cleanDomain}.crt;
+    ssl_certificate_key /etc/nginx/ssl/${cleanDomain}.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location ~ ^/_matrix/client/(v3|r0)/(account/password|account/deactivate|capabilities|profile/[^/]+/avatar_url|rooms/[^/]+/(send|state|join|invite)|createRoom|login)($|/) {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+        client_max_body_size 50M;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8008;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+`;
+
+  const panelB64 = Buffer.from(panelNginxConf, 'utf-8').toString('base64');
+  const elemB64 = Buffer.from(elementNginxConf, 'utf-8').toString('base64');
+  const synB64 = Buffer.from(defaultSynapseNginxConf, 'utf-8').toString('base64');
+
   const script = `
-bash -c '
-d="$1"
-cert="$2"
-key="$3"
-is_panel="$4"
-upstream="$5"
-syn_host="$6"
-hs_domain="$7"
-[ -z "$upstream" ] && upstream="http://127.0.0.1:3000"
-[ -z "$syn_host" ] && syn_host="127.0.0.1"
+d="${cleanDomain}"
+cert="${certPath}"
+key="${keyPath}"
+is_panel="${isPanel ? "true" : "false"}"
 
 # 1. Create standard SSL directory and copy cert/key as both .crt and .pem
 mkdir -p /etc/nginx/ssl
@@ -21971,7 +22158,7 @@ if [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]];
   cp "$key" /etc/ssl/matrix/element.key 2>/dev/null || true
   chmod 600 /etc/ssl/matrix/element.key 2>/dev/null || true
 fi
-if [[ "\${d}" == matrix* ]] || [[ "\${d}" == synapse* ]] || [ "$d" = "$hs_domain" ]; then
+if [[ "\${d}" == matrix* ]] || [[ "\${d}" == synapse* ]] || [ "$d" = "${hsDomain}" ]; then
   cp "$cert" /etc/ssl/matrix/synapse.crt 2>/dev/null || true
   cp "$key" /etc/ssl/matrix/synapse.key 2>/dev/null || true
   chmod 600 /etc/ssl/matrix/synapse.key 2>/dev/null || true
@@ -21984,11 +22171,11 @@ cp "$cert" "/etc/letsencrypt/live/\${d}/cert.pem" 2>/dev/null || true
 cp "$key" "/etc/letsencrypt/live/\${d}/privkey.pem" 2>/dev/null || true
 chmod 600 "/etc/letsencrypt/live/\${d}/privkey.pem" 2>/dev/null || true
 
-# 2. Update specific Nginx site config files if present (matrix.conf, matrix-synapse.conf, element.conf, element-web.conf, wellknown.conf)
+# 2. Update specific Nginx site config files if present
 for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix.conf /etc/nginx/sites-enabled/matrix-synapse.conf /etc/nginx/conf.d/matrix.conf /etc/nginx/sites-available/wellknown.conf /etc/nginx/sites-enabled/wellknown.conf /etc/nginx/conf.d/wellknown.conf; do
   if [ -f "$conf_path" ]; then
     s_name=$(grep -E -h "server_name" "$conf_path" 2>/dev/null | grep -v "^#" | sed "s/server_name//" | tr ";" " ")
-    if [[ "$s_name" == *"$d"* ]] || [[ "$d" == matrix* ]] || [[ "$d" == synapse* ]] || [ "$d" = "$hs_domain" ]; then
+    if [[ "$s_name" == *"$d"* ]] || [[ "$d" == matrix* ]] || [[ "$d" == synapse* ]] || [ "$d" = "${hsDomain}" ]; then
       if grep -q "ssl_certificate " "$conf_path"; then
         sed -i -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$conf_path"
         sed -i -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$conf_path"
@@ -22025,7 +22212,7 @@ if [ -d /etc/nginx ]; then
   done
 fi
 
-# 4. If no site config file matches domain, create a new config file
+# 4. If no site config file matches domain, create a new config file using clean Base64 decoding
 if ! grep -rq "server_name.*\\b\${d}\\b" /etc/nginx/ 2>/dev/null; then
   conf_name="\${d}.conf"
   [ "$is_panel" = "true" ] && conf_name="raven-panel.conf"
@@ -22033,112 +22220,12 @@ if ! grep -rq "server_name.*\\b\${d}\\b" /etc/nginx/ 2>/dev/null; then
   [ -d /etc/nginx/sites-available ] && target_conf="/etc/nginx/sites-available/\${conf_name}"
 
   if [ "$is_panel" = "true" ]; then
-    cat << EOF > "$target_conf"
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name \${d};
-
-    ssl_certificate /etc/nginx/ssl/\${d}.crt;
-    ssl_certificate_key /etc/nginx/ssl/\${d}.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    location / {
-        proxy_pass \${upstream};
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \\$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        client_max_body_size 100M;
-    }
-}
-EOF
+    echo "${panelB64}" | base64 -d > "$target_conf"
   elif [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]]; then
-    # Check if Element directory actually exists
-    el_dir=""
-    for ed in /var/www/element /usr/share/element/web /var/www/element-web /var/www/html; do
-      if [ -d "$ed" ]; then el_dir="$ed"; break; fi
-    done
-    if [ -z "$el_dir" ]; then
-      mkdir -p /var/www/element
-      el_dir="/var/www/element"
-    fi
-
-    cat << EOF > "$target_conf"
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name \${d};
-
-    ssl_certificate /etc/nginx/ssl/\${d}.crt;
-    ssl_certificate_key /etc/nginx/ssl/\${d}.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-
-    root \${el_dir};
-    index index.html;
-
-    location / {
-        try_files \\$uri \\$uri/ /index.html;
-        add_header Cache-Control "no-cache";
-    }
-
-    location = /config.json {
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
-        add_header Pragma "no-cache";
-        add_header Expires "0";
-    }
-
-    # Proxy Matrix Homeserver API calls directly to Synapse node
-    location ~ ^(/_matrix|/_synapse) {
-        proxy_pass http://\${syn_host}:8008;
-        proxy_set_header Host \${hs_domain};
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-        proxy_http_version 1.1;
-        proxy_connect_timeout 30s;
-        proxy_read_timeout 120s;
-        proxy_send_timeout 120s;
-        client_max_body_size 100M;
-
-        add_header 'Access-Control-Allow-Origin' '*' always;
-        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
-        add_header 'Access-Control-Allow-Headers' 'X-Requested-With, Content-Type, Authorization, Date' always;
-    }
-}
-EOF
+    mkdir -p /var/www/element
+    echo "${elemB64}" | base64 -d > "$target_conf"
   else
-    # Default Matrix homeserver site config (Works standalone or alongside Element)
-    cat << EOF > "$target_conf"
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name \${d};
-
-    ssl_certificate /etc/nginx/ssl/\${d}.crt;
-    ssl_certificate_key /etc/nginx/ssl/\${d}.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-
-    location ~ ^/_matrix/client/(v3|r0)/(account/password|account/deactivate|capabilities|profile/[^/]+/avatar_url|rooms/[^/]+/(send|state|join|invite)|createRoom|login)(\$|/) {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header X-Forwarded-For \\$remote_addr;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-        proxy_set_header Host \\$host;
-        client_max_body_size 50M;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:8008;
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Forwarded-For \\$remote_addr;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-    }
-}
-EOF
+    echo "${synB64}" | base64 -d > "$target_conf"
   fi
 
   # Symlink to sites-enabled if directory exists
@@ -22149,7 +22236,6 @@ EOF
 fi
 
 exit 0
-' -- "${cleanDomain}" "${certPath}" "${keyPath}" "${isPanel ? "true" : "false"}" "${cleanUpstream}" "${synHost}" "${hsDomain}"
 `.trim();
 
   await runServerCommand(script, undefined, targetNode);
@@ -28243,24 +28329,29 @@ while start_marker in content and end_marker in content:
     content = content[:p1] + content[p2:]
 
 entries = ["127.0.0.1/32", "::1/128"]
-try:
-    if "/" in syn_host:
-        net = ipaddress.ip_network(syn_host, strict=False)
-        entries.append(str(net))
-    else:
-        ip = ipaddress.ip_address(syn_host)
-        if ip.version == 4:
-            entries.append(f"{ip}/32")
-            if ip.is_private:
-                subnet = ipaddress.ip_network(f"{ip}/24", strict=False)
-                entries.append(str(subnet))
+raw_hosts = [syn_host] + sys.argv[5:]
+
+for h in raw_hosts:
+    h = (h or "").strip()
+    if not h or h == "localhost" or h == "127.0.0.1":
+        continue
+    try:
+        if "/" in h:
+            net = ipaddress.ip_network(h, strict=False)
+            entries.append(str(net))
         else:
-            entries.append(f"{ip}/128")
-except ValueError:
-    if syn_host and syn_host != "localhost":
-        entries.append(syn_host)
+            ip = ipaddress.ip_address(h)
+            if ip.version == 4:
+                entries.append(f"{ip}/32")
+                if ip.is_private:
+                    subnet = ipaddress.ip_network(f"{ip}/24", strict=False)
+                    entries.append(str(subnet))
+            else:
+                entries.append(f"{ip}/128")
+    except ValueError:
+        entries.append(h)
         try:
-            for res in socket.getaddrinfo(syn_host, None):
+            for res in socket.getaddrinfo(h, None):
                 ip_str = res[4][0]
                 if ":" in ip_str:
                     entries.append(f"{ip_str}/128")
@@ -28280,17 +28371,18 @@ lines = [
 for e in unique_entries:
     lines.append(f"host    all          all          {e:26} trust")
     lines.append(f"host    {db_name}    {db_user}    {e:26} trust")
+    lines.append(f"host    all          {db_user}    {e:26} trust")
 
 lines.extend([
-    "# Remote cluster access for synapse user with password authentication",
-    f"host    {db_name}    {db_user}    0.0.0.0/0                 md5",
+    "# Remote cluster access for synapse user with password authentication (SCRAM-SHA-256 priority)",
     f"host    {db_name}    {db_user}    0.0.0.0/0                 scram-sha-256",
-    f"host    {db_name}    {db_user}    ::/0                      md5",
+    f"host    {db_name}    {db_user}    0.0.0.0/0                 md5",
     f"host    {db_name}    {db_user}    ::/0                      scram-sha-256",
-    f"host    all          {db_user}    0.0.0.0/0                 md5",
+    f"host    {db_name}    {db_user}    ::/0                      md5",
     f"host    all          {db_user}    0.0.0.0/0                 scram-sha-256",
-    f"host    all          {db_user}    ::/0                      md5",
+    f"host    all          {db_user}    0.0.0.0/0                 md5",
     f"host    all          {db_user}    ::/0                      scram-sha-256",
+    f"host    all          {db_user}    ::/0                      md5",
     "# End Matrix Enterprise Stack Database Whitelist",
     ""
 ])
@@ -28302,7 +28394,7 @@ with open(hba_file, "w", encoding="utf-8") as f:
     f.write(final_content)
 print(">>> [OK] pg_hba.conf whitelist updated successfully.")
 EOFPGHBA
-  python3 /tmp/wire_pg_hba.py "$PG_HBA" "${synHost}" "${dbUser}" "${dbName}" 2>&1 || true
+  python3 /tmp/wire_pg_hba.py "$PG_HBA" "${synHost}" "${dbUser}" "${dbName}" "${elemNode.host || ''}" "${dbNode.host || ''}" 2>&1 || true
   rm -f /tmp/wire_pg_hba.py
   # Ensure postgres user owns and can read pg_hba.conf (mode 640)
   chown postgres:postgres "$PG_HBA" 2>/dev/null || true
@@ -28871,9 +28963,10 @@ server {
         add_header 'Access-Control-Allow-Origin' '*' always;
     }
 
-    # Proxy Matrix Homeserver API calls directly to Synapse node
+    # Proxy Matrix Homeserver API calls directly to Synapse node over port 443
     location ~ ^(/_matrix|/_synapse) {
-        proxy_pass http://${synHost}:8008;
+        proxy_pass ${synHost !== '127.0.0.1' && synHost !== 'localhost' ? `https://${synHost}:443` : `http://127.0.0.1:8008`};
+        ${synHost !== '127.0.0.1' && synHost !== 'localhost' ? 'proxy_ssl_server_name on;\n        proxy_ssl_verify off;' : ''}
         proxy_set_header Host ${config.HS_DOMAIN};
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -28965,6 +29058,20 @@ fi
 if [ -f "/etc/matrix-synapse/homeserver.signing.key" ]; then
   chmod 640 "/etc/matrix-synapse/homeserver.signing.key" 2>/dev/null || true
 fi
+
+# Pre-flight Database Reachability Test from Synapse to Database Server
+echo "Testing connectivity to PostgreSQL at ${dbNode.host || '127.0.0.1'}:5432 from Synapse server..."
+python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(5)
+try:
+    s.connect(('${dbNode.host || '127.0.0.1'}', 5432))
+    s.close()
+    print('>>> [OK] Synapse server successfully connected to Database server on port 5432!')
+except Exception as e:
+    print('>>> [WARNING] Synapse server cannot reach Database server at ${dbNode.host || '127.0.0.1'}:5432:', e)
+" 2>&1 || true
 
 # Reset systemd failure rate-limiting and start cleanly
 systemctl daemon-reload
