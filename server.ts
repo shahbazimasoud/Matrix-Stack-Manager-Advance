@@ -21835,28 +21835,31 @@ async function runServerCommand(
   targetNode?: 'synapse' | 'database' | 'element' | 'default' | ServerNodeConfig
 ): Promise<string> {
   const activeConn = targetConnInput || getActiveConnection();
-  if (activeConn && activeConn.id !== "local") {
-    if (activeConn.authType === "agent") {
-      return await executeRemoteAgentTask(activeConn.id, "execute_command", { command: cmd });
-    } else {
-      const targetConfig = resolveNodeProfile(activeConn, targetNode);
-      if (targetConfig.username === "root" || !targetConfig.username) {
-        return await executeSSHCommand(targetConfig, cmd);
-      } else {
-        return await executeSSHCommand(targetConfig, `sudo bash -c ${JSON.stringify(cmd)}`);
-      }
-    }
-  } else {
-    return new Promise((resolve) => {
-      exec(cmd, { maxBuffer: 15 * 1024 * 1024 }, (err, stdout, stderr) => {
-        const parts: string[] = [];
-        if (stdout && stdout.trim()) parts.push(stdout.trim());
-        if (stderr && stderr.trim()) parts.push(stderr.trim());
-        if (err && err.message && !parts.length) parts.push(err.message);
-        resolve(parts.join("\n"));
-      });
-    });
+  const targetConfig = resolveNodeProfile(activeConn, targetNode);
+
+  if (targetConfig && targetConfig.authType === "agent" && targetConfig.id !== "local") {
+    return await executeRemoteAgentTask(targetConfig.id, "execute_command", { command: cmd });
   }
+
+  // If resolved target host is remote (not local machine), execute via SSH to that node!
+  if (targetConfig && !isLocalHostAddress(targetConfig.host)) {
+    if (targetConfig.username === "root" || !targetConfig.username) {
+      return await executeSSHCommand(targetConfig, cmd, targetNode);
+    } else {
+      return await executeSSHCommand(targetConfig, `sudo bash -c ${JSON.stringify(cmd)}`, targetNode);
+    }
+  }
+
+  // Target host is local machine (e.g. Element node where panel is running)
+  return new Promise((resolve) => {
+    exec(cmd, { maxBuffer: 15 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const parts: string[] = [];
+      if (stdout && stdout.trim()) parts.push(stdout.trim());
+      if (stderr && stderr.trim()) parts.push(stderr.trim());
+      if (err && err.message && !parts.length) parts.push(err.message);
+      resolve(parts.join("\n"));
+    });
+  });
 }
 
 // Function to get discovered domains from remote server (Nginx, Let's Encrypt, Certbot, OpenSSL certs, Matrix configs)
@@ -21922,6 +21925,21 @@ async function getDiscoveredDomains(): Promise<string[]> {
     }
   } catch (_) {}
 
+  // 1c. Add domains directly configured in /etc/matrix-stack-deployment.conf
+  try {
+    const depRaw = await readConfigContent("/etc/matrix-stack-deployment.conf", "");
+    if (depRaw) {
+      const hsMatch = depRaw.match(/^(?:DEPLOY_HS_DOMAIN|HS_DOMAIN|PUBLIC_SERVER_NAME)\s*=\s*(.+)$/m);
+      if (hsMatch && hsMatch[1]) addDomain(hsMatch[1].trim().replace(/['"]/g, ""));
+      const elemMatch = depRaw.match(/^(?:DEPLOY_ELEMENT_DOMAIN|ELEMENT_DOMAIN|WEB_DOMAIN)\s*=\s*(.+)$/m);
+      if (elemMatch && elemMatch[1]) addDomain(elemMatch[1].trim().replace(/['"]/g, ""));
+      const baseMatch = depRaw.match(/^(?:DEPLOY_BASE_DOMAIN|BASE_DOMAIN)\s*=\s*(.+)$/m);
+      if (baseMatch && baseMatch[1]) addDomain(baseMatch[1].trim().replace(/['"]/g, ""));
+      const panMatch = depRaw.match(/^(?:PANEL_DOMAIN)\s*=\s*(.+)$/m);
+      if (panMatch && panMatch[1]) addDomain(panMatch[1].trim().replace(/['"]/g, ""));
+    }
+  } catch (_) {}
+
   // 2. Add domains from database registered nodes
   try {
     const db = readDb();
@@ -21937,7 +21955,7 @@ async function getDiscoveredDomains(): Promise<string[]> {
     }
   } catch (e) {}
 
-  // 3. Run comprehensive deep discovery script directly on target remote server
+  // 3. Run comprehensive deep discovery script directly on target remote servers (both Synapse & Element)
   try {
     const deepScanCmd = `
 bash -c '
@@ -21988,7 +22006,7 @@ for cert in /etc/nginx/ssl/*.crt /etc/nginx/ssl/*.pem /etc/ssl/certs/*.crt /etc/
 done
 
 # Synapse & Matrix configs
-for cfg in /etc/matrix-synapse/homeserver.yaml /etc/matrix-synapse/conf.d/*.yaml /etc/matrix-stack.conf /var/www/element/config.json /etc/element/config.json /etc/element-web/config.json; do
+for cfg in /etc/matrix-synapse/homeserver.yaml /etc/matrix-synapse/conf.d/*.yaml /etc/matrix-stack.conf /etc/matrix-stack-deployment.conf /var/www/element/config.json /etc/element/config.json /etc/element-web/config.json; do
   if [ -f "$cfg" ]; then
     found=$(grep -oE "([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})" "$cfg" 2>/dev/null)
     for f in $found; do [ -n "$f" ] && doms+=("$f"); done
@@ -22003,6 +22021,7 @@ printf "%s\n" "\${doms[@]}" | tr " " "\n" | sort -u
 ' || true
 `.trim();
 
+    // 1. Scan default/local node
     const remoteDoms = await runServerCommand(deepScanCmd).catch(() => "");
     if (remoteDoms) {
       remoteDoms.split("\n").forEach((line) => {
@@ -22011,14 +22030,22 @@ printf "%s\n" "\${doms[@]}" | tr " " "\n" | sort -u
       });
     }
 
-    if (activeConn?.deploymentMode === 'distributed' && activeConn?.elementNode?.host) {
-      const elemDoms = await runServerCommand(deepScanCmd, undefined, 'element').catch(() => "");
-      if (elemDoms) {
-        elemDoms.split("\n").forEach((line) => {
-          const item = line.trim();
-          if (item) addDomain(item);
-        });
-      }
+    // 2. Scan Synapse node (whether local or remote distributed)
+    const synDoms = await runServerCommand(deepScanCmd, undefined, 'synapse').catch(() => "");
+    if (synDoms) {
+      synDoms.split("\n").forEach((line) => {
+        const item = line.trim();
+        if (item) addDomain(item);
+      });
+    }
+
+    // 3. Scan Element node (whether local or remote distributed)
+    const elemDoms = await runServerCommand(deepScanCmd, undefined, 'element').catch(() => "");
+    if (elemDoms) {
+      elemDoms.split("\n").forEach((line) => {
+        const item = line.trim();
+        if (item) addDomain(item);
+      });
     }
   } catch (e) {
     console.warn("Deep domain discovery failed on target server:", e);
@@ -22056,6 +22083,55 @@ async function getClusterDomainMap(activeConnInput?: any): Promise<ClusterDomain
     (conn?.deploymentMode === 'distributed' && elementHost) ||
     (elementHost && elementHost !== '127.0.0.1' && elementHost !== 'localhost' && elementHost !== synapseHost)
   );
+
+  // Check saved database connections for distributed cluster configuration
+  try {
+    const db = readDb();
+    if (db?.connections && Array.isArray(db.connections)) {
+      for (const c of db.connections) {
+        if (c.deploymentMode === 'distributed' || c.synapseNode || c.elementNode) {
+          isDistributed = true;
+          if ((!synapseHost || synapseHost === '127.0.0.1') && c.synapseNode?.host) synapseHost = c.synapseNode.host;
+          if (!elementHost && c.elementNode?.host) elementHost = c.elementNode.host;
+          if (!synapseDomain && (c.synapseNode?.domain || c.hsDomain)) synapseDomain = c.synapseNode?.domain || c.hsDomain;
+          if (!elementDomain && (c.elementNode?.domain || c.elementDomain)) elementDomain = c.elementNode?.domain || c.elementDomain;
+          if (!baseDomain && c.domain) baseDomain = c.domain;
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Read /etc/matrix-stack-deployment.conf if available
+  try {
+    const depRaw = await readConfigContent("/etc/matrix-stack-deployment.conf", "");
+    if (depRaw) {
+      const depMode = depRaw.match(/^DEPLOYMENT_MODE\s*=\s*(.+)$/m);
+      if (depMode && depMode[1] && depMode[1].trim().toLowerCase() === 'distributed') {
+        isDistributed = true;
+      }
+
+      const synHM = depRaw.match(/^(?:SYNAPSE_HOST|SYNAPSE_NODE_HOST|HS_HOST|SYNAPSE_SERVER_IP)\s*=\s*(.+)$/m);
+      if (synHM && synHM[1]) {
+        const parsedSyn = synHM[1].trim().replace(/['"]/g, "");
+        if (parsedSyn) synapseHost = parsedSyn;
+      }
+
+      const elemHM = depRaw.match(/^(?:ELEMENT_HOST|ELEMENT_NODE_HOST|WEB_HOST|ELEMENT_SERVER_IP)\s*=\s*(.+)$/m);
+      if (elemHM && elemHM[1]) {
+        const parsedElem = elemHM[1].trim().replace(/['"]/g, "");
+        if (parsedElem) elementHost = parsedElem;
+      }
+
+      const hsM = depRaw.match(/^(?:DEPLOY_HS_DOMAIN|HS_DOMAIN|PUBLIC_SERVER_NAME)\s*=\s*(.+)$/m);
+      if (hsM && hsM[1] && !synapseDomain) synapseDomain = hsM[1].trim().replace(/['"]/g, "");
+      const elemM = depRaw.match(/^(?:DEPLOY_ELEMENT_DOMAIN|ELEMENT_DOMAIN|WEB_DOMAIN|CLIENT_DOMAIN)\s*=\s*(.+)$/m);
+      if (elemM && elemM[1] && !elementDomain) elementDomain = elemM[1].trim().replace(/['"]/g, "");
+      const baseM = depRaw.match(/^(?:DEPLOY_BASE_DOMAIN|BASE_DOMAIN)\s*=\s*(.+)$/m);
+      if (baseM && baseM[1] && !baseDomain) baseDomain = baseM[1].trim().replace(/['"]/g, "");
+      const panM = depRaw.match(/^PANEL_DOMAIN\s*=\s*(.+)$/m);
+      if (panM && panM[1] && !panelDomain) panelDomain = panM[1].trim().replace(/['"]/g, "");
+    }
+  } catch (_) {}
 
   // Read /etc/matrix-stack.conf if available
   try {
@@ -22103,6 +22179,13 @@ async function getClusterDomainMap(activeConnInput?: any): Promise<ClusterDomain
     }
   } catch (_) {}
 
+  if (synapseHost && elementHost && synapseHost !== elementHost) {
+    isDistributed = true;
+  }
+  if (synapseHost && synapseHost !== '127.0.0.1' && synapseHost !== 'localhost') {
+    isDistributed = true;
+  }
+
   const synapseDomainsList = [synapseDomain].filter(Boolean);
   const elementDomainsList = [elementDomain].filter(Boolean);
   const panelDomainsList = [panelDomain].filter(Boolean);
@@ -22141,16 +22224,7 @@ function determineNodesForDomain(
 ): { nodes: ('synapse' | 'element')[]; isElement: boolean; isSynapse: boolean; isMulti: boolean; reason: string } {
   const clean = domain.toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
 
-  if (!clusterMap.isDistributed) {
-    return {
-      nodes: ['synapse'],
-      isElement: false,
-      isSynapse: true,
-      isMulti: false,
-      reason: 'حالت تک‌سرور مستقل (Standalone): تمام سرویس‌ها و دامنه‌ها روی سرور اصلی قرار دارند.'
-    };
-  }
-
+  // 1. Explicit user target takes absolute priority
   if (requestedTarget === 'synapse') {
     return {
       nodes: ['synapse'],
@@ -22166,7 +22240,7 @@ function determineNodesForDomain(
       isElement: true,
       isSynapse: false,
       isMulti: false,
-      reason: `انتخاب صریح نود سرور المنت وب (${clusterMap.elementHost})`
+      reason: `انتخاب صریح نود سرور المنت وب (${clusterMap.elementHost || 'localhost'})`
     };
   }
   if (requestedTarget === 'all') {
@@ -22175,7 +22249,17 @@ function determineNodesForDomain(
       isElement: true,
       isSynapse: true,
       isMulti: true,
-      reason: `استقرار کامل روی تمام نودهای کلاستر (سرور سیناپس: ${clusterMap.synapseHost} و سرور المنت: ${clusterMap.elementHost}) جهت خروج هر دو سرویس از حالت سلف‌ساین`
+      reason: `استقرار کامل روی تمام نودهای کلاستر (سرور سیناپس: ${clusterMap.synapseHost} و سرور المنت: ${clusterMap.elementHost || 'localhost'}) جهت خروج هر دو سرویس از حالت سلف‌ساین`
+    };
+  }
+
+  if (!clusterMap.isDistributed) {
+    return {
+      nodes: ['synapse'],
+      isElement: false,
+      isSynapse: true,
+      isMulti: false,
+      reason: 'حالت تک‌سرور مستقل (Standalone): تمام سرویس‌ها و دامنه‌ها روی سرور اصلی قرار دارند.'
     };
   }
 
@@ -22396,22 +22480,26 @@ if [ "$target_node" = "element" ] || [[ "\${d}" == element* ]] || [[ "\${d}" == 
     chmod 600 "/etc/nginx/ssl/${elemDomain}.key" 2>/dev/null || true
   fi
 fi
-if [ "$target_node" = "synapse" ] || [[ "\${d}" == matrix* ]] || [[ "\${d}" == synapse* ]] || [ "$d" = "${hsDomain}" ]; then
-  cp "$cert" /etc/ssl/matrix/synapse.crt 2>/dev/null || true
-  cp "$key" /etc/ssl/matrix/synapse.key 2>/dev/null || true
-  chmod 644 /etc/ssl/matrix/synapse.crt 2>/dev/null || true
-  chmod 600 /etc/ssl/matrix/synapse.key 2>/dev/null || true
+if [ "$target_node" = "synapse" ] || [[ "\${d}" == matrix* ]] || [[ "\${d}" == synapse* ]] || [ "$d" = "${hsDomain}" ] || [ -f /etc/matrix-synapse/homeserver.yaml ]; then
+  cp -f "$cert" /etc/ssl/matrix/synapse.crt 2>/dev/null || true
+  cp -f "$key" /etc/ssl/matrix/synapse.key 2>/dev/null || true
+  cp -f "$cert" /etc/nginx/ssl/matrix.crt 2>/dev/null || true
+  cp -f "$key" /etc/nginx/ssl/matrix.key 2>/dev/null || true
+  cp -f "$cert" /etc/nginx/ssl/synapse.crt 2>/dev/null || true
+  cp -f "$key" /etc/nginx/ssl/synapse.key 2>/dev/null || true
+  chmod 644 /etc/ssl/matrix/synapse.crt /etc/nginx/ssl/matrix.crt /etc/nginx/ssl/synapse.crt 2>/dev/null || true
+  chmod 600 /etc/ssl/matrix/synapse.key /etc/nginx/ssl/matrix.key /etc/nginx/ssl/synapse.key 2>/dev/null || true
   chown matrix-synapse:matrix-synapse /etc/ssl/matrix/synapse.* 2>/dev/null || true
   if [ -n "${hsDomain}" ]; then
-    cp "$cert" "/etc/nginx/ssl/${hsDomain}.crt" 2>/dev/null || true
-    cp "$key" "/etc/nginx/ssl/${hsDomain}.key" 2>/dev/null || true
+    cp -f "$cert" "/etc/nginx/ssl/${hsDomain}.crt" 2>/dev/null || true
+    cp -f "$key" "/etc/nginx/ssl/${hsDomain}.key" 2>/dev/null || true
     chmod 600 "/etc/nginx/ssl/${hsDomain}.key" 2>/dev/null || true
   fi
   # If Synapse homeserver.yaml has TLS configured, ensure it points to valid certs
   if [ -f /etc/matrix-synapse/homeserver.yaml ]; then
     if grep -q "tls_certificate_path:" /etc/matrix-synapse/homeserver.yaml; then
-      sed -i -E 's|tls_certificate_path:\s*.*|tls_certificate_path: "/etc/ssl/matrix/synapse.crt"|g' /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
-      sed -i -E 's|tls_private_key_path:\s*.*|tls_private_key_path: "/etc/ssl/matrix/synapse.key"|g' /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
+      sed -i --follow-symlinks -E 's|tls_certificate_path:\s*.*|tls_certificate_path: "/etc/ssl/matrix/synapse.crt"|g' /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
+      sed -i --follow-symlinks -E 's|tls_private_key_path:\s*.*|tls_private_key_path: "/etc/ssl/matrix/synapse.key"|g' /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
     fi
   fi
 fi
@@ -22427,10 +22515,10 @@ chmod 600 "/etc/letsencrypt/live/\${d}/privkey.pem" 2>/dev/null || true
 for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix.conf /etc/nginx/sites-enabled/matrix-synapse.conf /etc/nginx/conf.d/matrix.conf /etc/nginx/conf.d/matrix-synapse.conf /etc/nginx/sites-available/wellknown.conf /etc/nginx/sites-enabled/wellknown.conf /etc/nginx/conf.d/wellknown.conf; do
   if [ -f "$conf_path" ]; then
     s_name=$(grep -E -h "server_name" "$conf_path" 2>/dev/null | grep -v "^#" | sed "s/server_name//" | tr ";" " ")
-    if [[ "$s_name" == *"$d"* ]] || [ "$target_node" = "synapse" ] || [ "$d" = "${hsDomain}" ]; then
+    if [[ "$s_name" == *"$d"* ]] || [ "$target_node" = "synapse" ] || [ "$d" = "${hsDomain}" ] || grep -q "proxy_pass.*8008" "$conf_path" 2>/dev/null; then
       if grep -q "ssl_certificate " "$conf_path"; then
-        sed -i -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$conf_path"
-        sed -i -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$conf_path"
+        sed -i --follow-symlinks -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$conf_path"
+        sed -i --follow-symlinks -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$conf_path"
       fi
     fi
   fi
@@ -22439,10 +22527,10 @@ done
 for conf_path in /etc/nginx/sites-available/element.conf /etc/nginx/sites-available/element-web.conf /etc/nginx/sites-enabled/element.conf /etc/nginx/sites-enabled/element-web.conf /etc/nginx/conf.d/element.conf /etc/nginx/conf.d/element-web.conf /etc/nginx/conf.d/default.conf; do
   if [ -f "$conf_path" ]; then
     s_name=$(grep -E -h "server_name" "$conf_path" 2>/dev/null | grep -v "^#" | sed "s/server_name//" | tr ";" " ")
-    if [[ "$s_name" == *"$d"* ]] || [ "$target_node" = "element" ] || [ "$d" = "${elemDomain}" ]; then
+    if [[ "$s_name" == *"$d"* ]] || [ "$target_node" = "element" ] || [ "$d" = "${elemDomain}" ] || grep -q "/var/www/element" "$conf_path" 2>/dev/null; then
       if grep -q "ssl_certificate " "$conf_path"; then
-        sed -i -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$conf_path"
-        sed -i -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$conf_path"
+        sed -i --follow-symlinks -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$conf_path"
+        sed -i --follow-symlinks -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$conf_path"
       fi
     fi
   fi
@@ -22450,17 +22538,20 @@ done
 
 # 3. Search for any existing Nginx config file that contains server_name matching domain
 if [ -d /etc/nginx ]; then
-  for found_file in $(grep -rl "server_name.*\\b\${d}\\b" /etc/nginx/ 2>/dev/null | sort -u); do
-    [ -f "$found_file" ] || continue
-    if grep -q "ssl_certificate " "$found_file"; then
-      sed -i -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$found_file"
-      sed -i -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$found_file"
-    else
-      sed -i "/server_name.*\\b\${d}\\b/a \\    ssl_certificate /etc/nginx/ssl/\${d}.crt;\\n    ssl_certificate_key /etc/nginx/ssl/\${d}.key;\\n    ssl_protocols TLSv1.2 TLSv1.3;" "$found_file"
-    fi
-    if ! grep -q "listen 443" "$found_file"; then
-      sed -i "/server_name/i \\    listen 443 ssl http2;\\n    listen [::]:443 ssl http2;" "$found_file"
-    fi
+  for search_dom in "$d" "${hsDomain}" "${elemDomain}"; do
+    [ -z "$search_dom" ] && continue
+    for found_file in $(grep -rl "server_name.*\\b\${search_dom}\\b" /etc/nginx/ 2>/dev/null | sort -u); do
+      [ -f "$found_file" ] || continue
+      if grep -q "ssl_certificate " "$found_file"; then
+        sed -i --follow-symlinks -E "s|ssl_certificate\\s+[^;]+;|ssl_certificate /etc/nginx/ssl/\${d}.crt;|g" "$found_file"
+        sed -i --follow-symlinks -E "s|ssl_certificate_key\\s+[^;]+;|ssl_certificate_key /etc/nginx/ssl/\${d}.key;|g" "$found_file"
+      else
+        sed -i --follow-symlinks "/server_name.*\\b\${search_dom}\\b/a \\    ssl_certificate /etc/nginx/ssl/\${d}.crt;\\n    ssl_certificate_key /etc/nginx/ssl/\${d}.key;\\n    ssl_protocols TLSv1.2 TLSv1.3;" "$found_file"
+      fi
+      if ! grep -q "listen 443" "$found_file"; then
+        sed -i --follow-symlinks "/server_name/i \\    listen 443 ssl http2;\\n    listen [::]:443 ssl http2;" "$found_file"
+      fi
+    done
   done
 fi
 
@@ -22488,7 +22579,7 @@ if ! grep -rq "server_name.*\\b\${d}\\b" /etc/nginx/ 2>/dev/null; then
 fi
 
 # 5. Reload Synapse service if running on synapse node so TLS cert update is applied immediately
-if [ "$target_node" = "synapse" ]; then
+if [ "$target_node" = "synapse" ] || [ -f /etc/matrix-synapse/homeserver.yaml ]; then
   systemctl reload matrix-synapse 2>/dev/null || true
 fi
 
@@ -22601,15 +22692,18 @@ echo "${keyB64}" | base64 -d > "${keyDest}"
 chmod 644 "${certDest}"
 chmod 600 "${keyDest}"
 chown root:root "${keyDest}" 2>/dev/null || true
-if [ -d /etc/ssl/matrix ]; then
-  echo "${certB64}" | base64 -d > /etc/ssl/matrix/synapse.crt 2>/dev/null || true
-  echo "${keyB64}" | base64 -d > /etc/ssl/matrix/synapse.key 2>/dev/null || true
-  echo "${certB64}" | base64 -d > /etc/ssl/matrix/element.crt 2>/dev/null || true
-  echo "${keyB64}" | base64 -d > /etc/ssl/matrix/element.key 2>/dev/null || true
-  chmod 644 /etc/ssl/matrix/*.crt 2>/dev/null || true
-  chmod 600 /etc/ssl/matrix/*.key 2>/dev/null || true
-  chown matrix-synapse:matrix-synapse /etc/ssl/matrix/synapse.* 2>/dev/null || true
-fi
+
+echo "${certB64}" | base64 -d > /etc/nginx/ssl/matrix.crt 2>/dev/null || true
+echo "${keyB64}" | base64 -d > /etc/nginx/ssl/matrix.key 2>/dev/null || true
+echo "${certB64}" | base64 -d > /etc/nginx/ssl/synapse.crt 2>/dev/null || true
+echo "${keyB64}" | base64 -d > /etc/nginx/ssl/synapse.key 2>/dev/null || true
+echo "${certB64}" | base64 -d > /etc/ssl/matrix/synapse.crt 2>/dev/null || true
+echo "${keyB64}" | base64 -d > /etc/ssl/matrix/synapse.key 2>/dev/null || true
+echo "${certB64}" | base64 -d > /etc/ssl/matrix/element.crt 2>/dev/null || true
+echo "${keyB64}" | base64 -d > /etc/ssl/matrix/element.key 2>/dev/null || true
+chmod 644 /etc/ssl/matrix/*.crt 2>/dev/null || true
+chmod 600 /etc/ssl/matrix/*.key 2>/dev/null || true
+chown matrix-synapse:matrix-synapse /etc/ssl/matrix/synapse.* 2>/dev/null || true
 exit 0
 '`;
       await runServerCommand(writeScript, undefined, node);

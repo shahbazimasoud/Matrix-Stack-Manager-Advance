@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.56.2** (Released: 2026-09-06)
+## Current Panel Version: **v2.56.3** (Released: 2026-09-06)
 
 ### Changelog History
+
+#### **v2.56.3** - 2026-09-06
+- **Distributed Synapse Node SSL Routing & Complete Self-Signed Elimination**:
+  - **Remote SSH Routing to Synapse Node**: Fixed command routing in `runServerCommand` so that commands targeting the Synapse node in a distributed architecture correctly resolve the SSH profile and execute remotely on the Synapse server (`172.16.60.101`).
+  - **Cluster Topology & Node Map Resolution**: Enhanced `getClusterDomainMap` and `determineNodesForDomain` to read deployment configurations and database connection profiles to automatically identify homeserver domains and their hosting node.
+  - **Symlink-Safe Nginx Config Updates**: Updated all Nginx certificate replacement commands to use `sed --follow-symlinks` across `/etc/nginx/sites-available`, `/etc/nginx/sites-enabled`, and `/etc/nginx/conf.d`.
+  - **Full Certificate Synchronization**: Ensures certificates are written to `/etc/nginx/ssl/${domain}.crt`, `/etc/nginx/ssl/matrix.crt`, `/etc/nginx/ssl/synapse.crt`, `/etc/ssl/matrix/synapse.crt`, `/etc/letsencrypt/live/`, and `/etc/matrix-synapse/homeserver.yaml`, followed by zero-downtime Nginx and matrix-synapse service reloads.
 
 #### **v2.56.2** - 2026-09-06
 - **Dual-Node SSL Deployment & Zero Self-Signed Elimination (Synapse & Element Web)**:

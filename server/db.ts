@@ -799,6 +799,24 @@ async function getOrCreateSSHClient(config: ConnectionProfile): Promise<SSHClien
       connOpts.privateKey = config.privateKey;
     }
 
+    // Auto-detect default host SSH keys if no credentials were provided
+    if (!connOpts.password && !connOpts.privateKey) {
+      const keyCandidates = [
+        '/root/.ssh/id_rsa',
+        '/root/.ssh/id_ed25519',
+        path.join(os.homedir(), '.ssh', 'id_rsa'),
+        path.join(os.homedir(), '.ssh', 'id_ed25519')
+      ];
+      for (const kp of keyCandidates) {
+        try {
+          if (fs.existsSync(kp)) {
+            connOpts.privateKey = fs.readFileSync(kp, 'utf-8');
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+
     try {
       conn.connect(connOpts);
     } catch (e) {
@@ -841,53 +859,166 @@ export function resolveNodeProfile(
     };
   }
 
-  if (config.deploymentMode === 'distributed') {
-    if (targetNode === 'database' && config.databaseNode && config.databaseNode.host) {
-      return {
-        ...config,
-        id: `${config.id}_db_node`,
-        host: config.databaseNode.host,
-        port: config.databaseNode.port || 22,
-        username: config.databaseNode.username || 'root',
-        password: config.databaseNode.password,
-        privateKey: config.databaseNode.privateKey,
-        authType: config.databaseNode.authType || 'password',
-        dbHost: config.databaseNode.dbHost || '127.0.0.1',
-        dbPort: config.databaseNode.dbPort || 5432,
-        dbName: config.databaseNode.dbName || 'synapse',
-        dbUser: config.databaseNode.dbUser || 'synapse_user',
-        dbPass: config.databaseNode.dbPass !== undefined ? config.databaseNode.dbPass : config.dbPass,
-      };
+  // If already resolved to a specific node profile matching targetNode, return directly
+  if (config.id && (
+    (targetNode === 'synapse' && config.id.endsWith('_synapse_node')) ||
+    (targetNode === 'element' && config.id.endsWith('_element_node')) ||
+    (targetNode === 'database' && config.id.endsWith('_db_node'))
+  )) {
+    return config;
+  }
+
+  // 1. Direct resolution from config subnodes
+  if (targetNode === 'database' && config.databaseNode && config.databaseNode.host) {
+    return {
+      ...config,
+      id: `${config.id}_db_node`,
+      host: config.databaseNode.host,
+      port: config.databaseNode.port || 22,
+      username: config.databaseNode.username || config.username || 'root',
+      password: config.databaseNode.password || config.password,
+      privateKey: config.databaseNode.privateKey || config.privateKey,
+      authType: config.databaseNode.authType || config.authType || 'password',
+      dbHost: config.databaseNode.dbHost || config.databaseNode.host || config.dbHost || '127.0.0.1',
+      dbPort: config.databaseNode.dbPort || config.dbPort || 5432,
+      dbName: config.databaseNode.dbName || config.dbName || 'synapse',
+      dbUser: config.databaseNode.dbUser || config.dbUser || 'synapse_user',
+      dbPass: config.databaseNode.dbPass !== undefined ? config.databaseNode.dbPass : config.dbPass,
+    };
+  }
+
+  if (targetNode === 'element' && config.elementNode && config.elementNode.host) {
+    return {
+      ...config,
+      id: `${config.id}_element_node`,
+      host: config.elementNode.host,
+      port: config.elementNode.port || 22,
+      username: config.elementNode.username || config.username || 'root',
+      password: config.elementNode.password || config.password,
+      privateKey: config.elementNode.privateKey || config.privateKey,
+      authType: config.elementNode.authType || config.authType || 'password',
+      elementConfigPath: config.elementNode.elementConfigPath || config.elementConfigPath,
+    };
+  }
+
+  if ((targetNode === 'synapse' || (targetNode === 'default' && config.deploymentMode === 'distributed')) && config.synapseNode && config.synapseNode.host) {
+    return {
+      ...config,
+      id: `${config.id}_synapse_node`,
+      host: config.synapseNode.host,
+      port: config.synapseNode.port || 22,
+      username: config.synapseNode.username || config.username || 'root',
+      password: config.synapseNode.password || config.password,
+      privateKey: config.synapseNode.privateKey || config.privateKey,
+      authType: config.synapseNode.authType || config.authType || 'password',
+      adminUsername: config.synapseNode.adminUsername || config.adminUsername,
+      adminPassword: config.synapseNode.adminPassword || config.adminPassword,
+      adminAccessToken: config.synapseNode.adminAccessToken || config.adminAccessToken,
+      homeserverYamlPath: config.synapseNode.homeserverYamlPath || config.homeserverYamlPath,
+    };
+  }
+
+  // 2. Discover cluster nodes from panel db connections or system config files if not explicitly in active config
+  let synHost = "";
+  let elemHost = "";
+  let dbHost = "";
+  let foundCreds: any = null;
+
+  try {
+    const db = readDb();
+    if (db?.connections && Array.isArray(db.connections)) {
+      for (const c of db.connections) {
+        if (c.deploymentMode === 'distributed' || c.synapseNode || c.elementNode) {
+          if (!synHost && c.synapseNode?.host) synHost = c.synapseNode.host;
+          if (!elemHost && c.elementNode?.host) elemHost = c.elementNode.host;
+          if (!dbHost && c.databaseNode?.host) dbHost = c.databaseNode.host;
+          if (!foundCreds && (c.synapseNode?.password || c.synapseNode?.privateKey || c.password || c.privateKey)) {
+            foundCreds = c;
+          }
+        }
+      }
     }
-    if (targetNode === 'element' && config.elementNode && config.elementNode.host) {
-      return {
-        ...config,
-        id: `${config.id}_element_node`,
-        host: config.elementNode.host,
-        port: config.elementNode.port || 22,
-        username: config.elementNode.username || 'root',
-        password: config.elementNode.password,
-        privateKey: config.elementNode.privateKey,
-        authType: config.elementNode.authType || 'password',
-        elementConfigPath: config.elementNode.elementConfigPath || config.elementConfigPath,
-      };
-    }
-    if ((targetNode === 'synapse' || targetNode === 'default' || !targetNode) && config.synapseNode && config.synapseNode.host) {
-      return {
-        ...config,
-        id: `${config.id}_synapse_node`,
-        host: config.synapseNode.host,
-        port: config.synapseNode.port || 22,
-        username: config.synapseNode.username || 'root',
-        password: config.synapseNode.password,
-        privateKey: config.synapseNode.privateKey,
-        authType: config.synapseNode.authType || 'password',
-        adminUsername: config.synapseNode.adminUsername || config.adminUsername,
-        adminPassword: config.synapseNode.adminPassword || config.adminPassword,
-        adminAccessToken: config.synapseNode.adminAccessToken || config.adminAccessToken,
-        homeserverYamlPath: config.synapseNode.homeserverYamlPath || config.homeserverYamlPath,
-      };
-    }
+  } catch (_) {}
+
+  // Parse /etc/matrix-stack-deployment.conf & /etc/matrix-stack.conf
+  const confFiles = ["/etc/matrix-stack-deployment.conf", "/etc/matrix-stack.conf"];
+  for (const cf of confFiles) {
+    try {
+      if (fs.existsSync(cf)) {
+        const raw = fs.readFileSync(cf, "utf-8");
+        if (!synHost) {
+          const m = raw.match(/^(?:SYNAPSE_HOST|SYNAPSE_NODE_HOST|HS_HOST|SYNAPSE_SERVER_IP)\s*=\s*(.+)$/m);
+          if (m && m[1]) synHost = m[1].trim().replace(/['"]/g, "");
+        }
+        if (!elemHost) {
+          const m = raw.match(/^(?:ELEMENT_HOST|ELEMENT_NODE_HOST|WEB_HOST|ELEMENT_SERVER_IP)\s*=\s*(.+)$/m);
+          if (m && m[1]) elemHost = m[1].trim().replace(/['"]/g, "");
+        }
+        if (!dbHost) {
+          const m = raw.match(/^(?:POSTGRES_HOST|DATABASE_HOST|DB_HOST|PG_HOST)\s*=\s*(.+)$/m);
+          if (m && m[1]) dbHost = m[1].trim().replace(/['"]/g, "");
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Check default SSH key
+  let defaultKey = "";
+  const keyCandidates = [
+    '/root/.ssh/id_rsa',
+    '/root/.ssh/id_ed25519',
+    path.join(os.homedir(), '.ssh', 'id_rsa'),
+    path.join(os.homedir(), '.ssh', 'id_ed25519')
+  ];
+  for (const kp of keyCandidates) {
+    try {
+      if (fs.existsSync(kp)) {
+        defaultKey = fs.readFileSync(kp, 'utf-8');
+        break;
+      }
+    } catch (_) {}
+  }
+
+  if (targetNode === 'synapse' && synHost) {
+    const sCreds = foundCreds?.synapseNode || foundCreds || config;
+    return {
+      ...config,
+      id: `${config.id || "local"}_synapse_node`,
+      host: synHost,
+      port: Number(sCreds.port) || 22,
+      username: sCreds.username || 'root',
+      password: sCreds.password || '',
+      privateKey: sCreds.privateKey || defaultKey || '',
+      authType: sCreds.authType || (sCreds.password ? 'password' : (defaultKey || sCreds.privateKey ? 'key' : 'password')),
+    };
+  }
+
+  if (targetNode === 'element' && elemHost) {
+    const eCreds = foundCreds?.elementNode || foundCreds || config;
+    return {
+      ...config,
+      id: `${config.id || "local"}_element_node`,
+      host: elemHost,
+      port: Number(eCreds.port) || 22,
+      username: eCreds.username || 'root',
+      password: eCreds.password || '',
+      privateKey: eCreds.privateKey || defaultKey || '',
+      authType: eCreds.authType || (eCreds.password ? 'password' : (defaultKey || eCreds.privateKey ? 'key' : 'password')),
+    };
+  }
+
+  if (targetNode === 'database' && dbHost) {
+    const dCreds = foundCreds?.databaseNode || foundCreds || config;
+    return {
+      ...config,
+      id: `${config.id || "local"}_db_node`,
+      host: dbHost,
+      port: Number(dCreds.port) || 22,
+      username: dCreds.username || 'root',
+      password: dCreds.password || '',
+      privateKey: dCreds.privateKey || defaultKey || '',
+      authType: dCreds.authType || (dCreds.password ? 'password' : (defaultKey || dCreds.privateKey ? 'key' : 'password')),
+    };
   }
 
   return config;
@@ -988,7 +1119,30 @@ export async function executeSSHCommand(
     });
   };
 
-  return attemptExecute(false);
+  try {
+    return await attemptExecute(false);
+  } catch (sshErr: any) {
+    // If SSH2 library failed and host is remote, fallback to system SSH CLI
+    if (!isLocalHostAddress(targetConfig.host)) {
+      try {
+        const port = targetConfig.port || 22;
+        const user = targetConfig.username || 'root';
+        const escaped = cmd.replace(/'/g, "'\\''");
+        const fallbackCmd = `ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -p ${port} ${user}@${targetConfig.host} '${escaped}'`;
+        return await new Promise<string>((resolve, reject) => {
+          exec(fallbackCmd, { maxBuffer: 1024 * 1024 * 20, timeout: timeoutMs }, (err, stdout, stderr) => {
+            if (err) {
+              return reject(new Error((stderr || stdout || err.message).trim() || sshErr.message));
+            }
+            resolve(stdout);
+          });
+        });
+      } catch (_) {
+        throw sshErr;
+      }
+    }
+    throw sshErr;
+  }
 }
 
 export async function executeStreamingSSHCommand(

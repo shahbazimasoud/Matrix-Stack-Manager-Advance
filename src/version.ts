@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.56.2";
+export const PANEL_VERSION = "2.56.3";
 export const PANEL_BUILD_DATE = "2026-09-06";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.56.3",
+    date: "2026-09-06",
+    title: "Distributed Synapse Node SSL Routing & Complete Self-Signed Elimination",
+    changes: [
+      "Remote SSH Routing to Synapse Node: Fixed runServerCommand in distributed setups to resolve the Synapse SSH connection profile and execute SSL certificate deployment directly on the remote Synapse server (172.16.60.101).",
+      "Cluster Topology Detection: Enhanced getClusterDomainMap and determineNodesForDomain to parse deployment configs and database connection profiles, ensuring commands for homeserver domains route to the Synapse node.",
+      "Follow-Symlinks Nginx Configuration: Updated sed commands to use --follow-symlinks across /etc/nginx/sites-available, /etc/nginx/sites-enabled, and /etc/nginx/conf.d, ensuring symlinked virtual hosts update reliably.",
+      "Comprehensive Cert Synchronization: Synchronizes certificates to /etc/nginx/ssl/matrix.crt, /etc/nginx/ssl/synapse.crt, /etc/ssl/matrix/synapse.crt, /etc/letsencrypt/live/, and homeserver.yaml, followed by zero-downtime Nginx and matrix-synapse service reloads."
+    ]
+  },
   {
     version: "2.56.2",
     date: "2026-09-06",
