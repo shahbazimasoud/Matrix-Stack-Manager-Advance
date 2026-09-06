@@ -15,9 +15,16 @@
 
 ---
 
-## Current Panel Version: **v2.56.1** (Released: 2026-09-05)
+## Current Panel Version: **v2.56.2** (Released: 2026-09-06)
 
 ### Changelog History
+
+#### **v2.56.2** - 2026-09-06
+- **Dual-Node SSL Deployment & Zero Self-Signed Elimination (Synapse & Element Web)**:
+  - **Simultaneous Dual-Node SSL Deployment**: Upgraded certificate deployment pipelines (`/api/certificates/validate-and-upload` and `/api/certificates/apply-multi-domain`) to deploy certificates across both the Synapse homeserver node and the Element Web node in distributed environments, ensuring browser trust and banishing self-signed SSL warnings.
+  - **Cluster Target Node Selector in UI**: Added an interactive selector in the SSL / TLS Certificate Management interface allowing administrators to explicitly select target deployment nodes (`Both Servers (All)`, `Auto Routing`, `Synapse Only`, or `Element Web Only`).
+  - **Zero Self-Sign Nginx & Matrix Directory Synchronization**: Automatically updates `/etc/ssl/matrix/synapse.crt & .key`, `/etc/ssl/matrix/element.crt & .key`, and synchronizes all Nginx virtual host configurations on both server nodes with proper POSIX file permissions.
+  - **Homeserver TLS & Service Zero-Downtime Reload**: Automatically aligns `homeserver.yaml` TLS directives with the newly installed certificates and performs clean reloads on both Nginx and Matrix Synapse services.
 
 #### **v2.56.1** - 2026-09-05
 - **Synapse Noble APT Stall Fix & Resilient Stage 1 Package Provisioning**:

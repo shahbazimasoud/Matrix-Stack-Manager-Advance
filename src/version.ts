@@ -16,8 +16,8 @@
  * ============================================================================
  */
 
-export const PANEL_VERSION = "2.56.1";
-export const PANEL_BUILD_DATE = "2026-09-05";
+export const PANEL_VERSION = "2.56.2";
+export const PANEL_BUILD_DATE = "2026-09-06";
 export const PANEL_NAME = "Raven Matrix Admin Panel";
 export const PANEL_CODENAME = "Raven Spatial";
 
@@ -40,6 +40,17 @@ export function getUpdateVersionString(currentVersion: string, latestRemoteVersi
 }
 
 export const VERSION_HISTORY: VersionEntry[] = [
+  {
+    version: "2.56.2",
+    date: "2026-09-06",
+    title: "Dual-Node SSL Deployment & Zero Self-Signed Elimination (Synapse & Element Web)",
+    changes: [
+      "Simultaneous Dual-Node SSL Deployment: Enhanced certificate pipeline to install valid certificates on both Synapse (172.16.60.101) and Element Web (172.16.60.103) nodes simultaneously, completely eliminating browser self-signed security warnings.",
+      "Cluster Deployment Target Selector: Added interactive UI selection in Certificate Management allowing users to deploy to 'Both Servers (Synapse + Element)', 'Auto Routing', 'Synapse Only', or 'Element Web Only'.",
+      "Zero Self-Sign Nginx & System Configuration: Automatically replaces self-signed certificates in /etc/ssl/matrix/ and updates all Nginx virtual host configurations on both server nodes.",
+      "Homeserver TLS & Service Reloads: Ensures /etc/matrix-synapse/homeserver.yaml TLS directives point to valid certificates and reloads Matrix Synapse and Nginx services with zero downtime upon certificate installation."
+    ]
+  },
   {
     version: "2.56.1",
     date: "2026-09-05",

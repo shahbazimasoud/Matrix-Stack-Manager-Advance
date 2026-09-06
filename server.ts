@@ -22044,22 +22044,48 @@ export interface ClusterDomainInfo {
 // Helper: Inspect active cluster topology, connection profiles, and configuration files to build domain-to-server mapping
 async function getClusterDomainMap(activeConnInput?: any): Promise<ClusterDomainInfo> {
   const conn = activeConnInput || getActiveConnection();
-  const isDistributed = Boolean(conn?.deploymentMode === 'distributed' && conn?.elementNode?.host);
 
   let synapseHost = conn?.synapseNode?.host || conn?.host || "127.0.0.1";
-  let elementHost = conn?.elementNode?.host || "";
+  let elementHost = conn?.elementNode?.host || conn?.elementHost || "";
   let synapseDomain = conn?.hsDomain || conn?.synapseNode?.domain || conn?.domain || "";
   let elementDomain = conn?.elementDomain || conn?.elementNode?.domain || "";
   let baseDomain = conn?.domain || conn?.baseDomain || "";
   let panelDomain = conn?.panelDomain || "";
 
+  let isDistributed = Boolean(
+    (conn?.deploymentMode === 'distributed' && elementHost) ||
+    (elementHost && elementHost !== '127.0.0.1' && elementHost !== 'localhost' && elementHost !== synapseHost)
+  );
+
   // Read /etc/matrix-stack.conf if available
   try {
     const confRaw = await readConfigContent("/etc/matrix-stack.conf", "");
     if (confRaw) {
+      const topM = confRaw.match(/^TOPOLOGY\s*=\s*(.+)$/m);
+      if (topM && topM[1] && topM[1].trim().toLowerCase() === 'distributed') {
+        isDistributed = true;
+      }
+
+      const synHM = confRaw.match(/^(?:SYNAPSE_HOST|SYNAPSE_NODE_HOST|HS_HOST|SYNAPSE_SERVER_IP)\s*=\s*(.+)$/m);
+      if (synHM && synHM[1]) {
+        const parsedSyn = synHM[1].trim().replace(/['"]/g, "");
+        if (parsedSyn) synapseHost = parsedSyn;
+      }
+
+      const elemHM = confRaw.match(/^(?:ELEMENT_HOST|ELEMENT_NODE_HOST|WEB_HOST|ELEMENT_SERVER_IP)\s*=\s*(.+)$/m);
+      if (elemHM && elemHM[1]) {
+        const parsedElem = elemHM[1].trim().replace(/['"]/g, "");
+        if (parsedElem) {
+          elementHost = parsedElem;
+          if (elementHost !== '127.0.0.1' && elementHost !== 'localhost' && elementHost !== synapseHost) {
+            isDistributed = true;
+          }
+        }
+      }
+
       const hsM = confRaw.match(/^HS_DOMAIN\s*=\s*(.+)$/m) || confRaw.match(/^PUBLIC_SERVER_NAME\s*=\s*(.+)$/m);
       if (hsM && hsM[1] && !synapseDomain) synapseDomain = hsM[1].trim().replace(/['"]/g, "");
-      const elemM = confRaw.match(/^ELEMENT_DOMAIN\s*=\s*(.+)$/m) || confRaw.match(/^WEB_DOMAIN\s*=\s*(.+)$/m);
+      const elemM = confRaw.match(/^(?:ELEMENT_DOMAIN|WEB_DOMAIN|CLIENT_DOMAIN)\s*=\s*(.+)$/m);
       if (elemM && elemM[1] && !elementDomain) elementDomain = elemM[1].trim().replace(/['"]/g, "");
       const baseM = confRaw.match(/^BASE_DOMAIN\s*=\s*(.+)$/m);
       if (baseM && baseM[1] && !baseDomain) baseDomain = baseM[1].trim().replace(/['"]/g, "");
@@ -22085,8 +22111,11 @@ async function getClusterDomainMap(activeConnInput?: any): Promise<ClusterDomain
     if (!synapseDomain) synapseDomain = `matrix.${baseDomain}`;
     if (!elementDomain) elementDomain = `chat.${baseDomain}`;
     if (!synapseDomainsList.includes(`matrix.${baseDomain}`)) synapseDomainsList.push(`matrix.${baseDomain}`);
+    if (!synapseDomainsList.includes(`synapse.${baseDomain}`)) synapseDomainsList.push(`synapse.${baseDomain}`);
     if (!elementDomainsList.includes(`chat.${baseDomain}`)) elementDomainsList.push(`chat.${baseDomain}`);
     if (!elementDomainsList.includes(`element.${baseDomain}`)) elementDomainsList.push(`element.${baseDomain}`);
+    if (!elementDomainsList.includes(`matrixapp.${baseDomain}`)) elementDomainsList.push(`matrixapp.${baseDomain}`);
+    if (!elementDomainsList.includes(`web.${baseDomain}`)) elementDomainsList.push(`web.${baseDomain}`);
     if (!panelDomainsList.includes(`panel.${baseDomain}`)) panelDomainsList.push(`panel.${baseDomain}`);
   }
 
@@ -22146,7 +22175,7 @@ function determineNodesForDomain(
       isElement: true,
       isSynapse: true,
       isMulti: true,
-      reason: `استقرار کامل روی تمام نودهای کلاستر (سرور سیناپس: ${clusterMap.synapseHost} و سرور المنت: ${clusterMap.elementHost})`
+      reason: `استقرار کامل روی تمام نودهای کلاستر (سرور سیناپس: ${clusterMap.synapseHost} و سرور المنت: ${clusterMap.elementHost}) جهت خروج هر دو سرویس از حالت سلف‌ساین`
     };
   }
 
@@ -22160,12 +22189,12 @@ function determineNodesForDomain(
       isElement: true,
       isSynapse: true,
       isMulti: true,
-      reason: `دامنه وایلدکارد / پایه (${clean}) هر دو سرور سیناپس (${clusterMap.synapseHost}) و المنت وب (${clusterMap.elementHost}) را پوشش می‌دهد.`
+      reason: `دامنه وایلدکارد / پایه (${clean}) هر دو سرور سیناپس (${clusterMap.synapseHost}) و المنت وب (${clusterMap.elementHost}) را پوشش می‌دهد و هر دو از حالت سلف‌ساین خارج می‌شوند.`
     };
   }
 
   const isElem = clusterMap.elementDomainsList.some(d => d && (clean === d || clean.endsWith(`.${d}`))) ||
-    clean.startsWith('element.') || clean.startsWith('chat.') || clean.startsWith('web.') || clean.startsWith('im.') || clean.startsWith('client.') || clean.startsWith('messenger.');
+    clean.startsWith('element.') || clean.startsWith('chat.') || clean.startsWith('web.') || clean.startsWith('matrixapp.') || clean.startsWith('app.') || clean.startsWith('im.') || clean.startsWith('client.') || clean.startsWith('messenger.');
 
   const isSyn = clusterMap.synapseDomainsList.some(d => d && (clean === d || clean.endsWith(`.${d}`))) ||
     clean.startsWith('matrix.') || clean.startsWith('synapse.');
@@ -22176,7 +22205,7 @@ function determineNodesForDomain(
       isElement: true,
       isSynapse: false,
       isMulti: false,
-      reason: `دامنه ${clean} متعلق به سرور المنت وب (${clusterMap.elementHost}) است و مستقیماً روی Nginx این سرور سوار می‌شود.`
+      reason: `دامنه ${clean} متعلق به سرور المنت وب (${clusterMap.elementHost}) است و روی Nginx این سرور اعمال می‌شود.`
     };
   }
 
@@ -22186,7 +22215,7 @@ function determineNodesForDomain(
       isElement: false,
       isSynapse: true,
       isMulti: false,
-      reason: `دامنه ${clean} متعلق به سرور سیناپس (${clusterMap.synapseHost}) است و مستقیماً روی Nginx این سرور سوار می‌شود.`
+      reason: `دامنه ${clean} متعلق به سرور سیناپس (${clusterMap.synapseHost}) است و روی Nginx این سرور اعمال می‌شود.`
     };
   }
 
@@ -22200,13 +22229,13 @@ function determineNodesForDomain(
     };
   }
 
-  // Default for distributed: deploy across both for safety
+  // Default for distributed: deploy across both for complete safety & zero self-signed warnings
   return {
     nodes: ['synapse', 'element'],
     isElement: true,
     isSynapse: true,
     isMulti: true,
-    reason: `دامنه ${clean} جهت پوشش کامل روی هر دو سرور کلاستر (سیناپس و المنت) سوار شد.`
+    reason: `دامنه ${clean} جهت پوشش کامل و رفع سلف‌ساین روی هر دو سرور کلاستر (سیناپس و المنت) سوار شد.`
   };
 }
 
@@ -22356,17 +22385,35 @@ chown root:root "/etc/nginx/ssl/\${d}.key" 2>/dev/null || true
 
 # Update /etc/ssl/matrix
 mkdir -p /etc/ssl/matrix 2>/dev/null || true
-if [ "$target_node" = "element" ] || [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]] || [ "$d" = "${elemDomain}" ]; then
+if [ "$target_node" = "element" ] || [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]] || [[ "\${d}" == matrixapp* ]] || [ "$d" = "${elemDomain}" ]; then
   cp "$cert" /etc/ssl/matrix/element.crt 2>/dev/null || true
   cp "$key" /etc/ssl/matrix/element.key 2>/dev/null || true
+  chmod 644 /etc/ssl/matrix/element.crt 2>/dev/null || true
   chmod 600 /etc/ssl/matrix/element.key 2>/dev/null || true
+  if [ -n "${elemDomain}" ]; then
+    cp "$cert" "/etc/nginx/ssl/${elemDomain}.crt" 2>/dev/null || true
+    cp "$key" "/etc/nginx/ssl/${elemDomain}.key" 2>/dev/null || true
+    chmod 600 "/etc/nginx/ssl/${elemDomain}.key" 2>/dev/null || true
+  fi
 fi
 if [ "$target_node" = "synapse" ] || [[ "\${d}" == matrix* ]] || [[ "\${d}" == synapse* ]] || [ "$d" = "${hsDomain}" ]; then
   cp "$cert" /etc/ssl/matrix/synapse.crt 2>/dev/null || true
   cp "$key" /etc/ssl/matrix/synapse.key 2>/dev/null || true
+  chmod 644 /etc/ssl/matrix/synapse.crt 2>/dev/null || true
   chmod 600 /etc/ssl/matrix/synapse.key 2>/dev/null || true
   chown matrix-synapse:matrix-synapse /etc/ssl/matrix/synapse.* 2>/dev/null || true
-  chmod 644 /etc/ssl/matrix/synapse.crt 2>/dev/null || true
+  if [ -n "${hsDomain}" ]; then
+    cp "$cert" "/etc/nginx/ssl/${hsDomain}.crt" 2>/dev/null || true
+    cp "$key" "/etc/nginx/ssl/${hsDomain}.key" 2>/dev/null || true
+    chmod 600 "/etc/nginx/ssl/${hsDomain}.key" 2>/dev/null || true
+  fi
+  # If Synapse homeserver.yaml has TLS configured, ensure it points to valid certs
+  if [ -f /etc/matrix-synapse/homeserver.yaml ]; then
+    if grep -q "tls_certificate_path:" /etc/matrix-synapse/homeserver.yaml; then
+      sed -i -E 's|tls_certificate_path:\s*.*|tls_certificate_path: "/etc/ssl/matrix/synapse.crt"|g' /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
+      sed -i -E 's|tls_private_key_path:\s*.*|tls_private_key_path: "/etc/ssl/matrix/synapse.key"|g' /etc/matrix-synapse/homeserver.yaml 2>/dev/null || true
+    fi
+  fi
 fi
 
 # Also populate letsencrypt live folder if domain matches
@@ -22377,7 +22424,7 @@ cp "$key" "/etc/letsencrypt/live/\${d}/privkey.pem" 2>/dev/null || true
 chmod 600 "/etc/letsencrypt/live/\${d}/privkey.pem" 2>/dev/null || true
 
 # 2. Update specific Nginx site config files if present
-for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix.conf /etc/nginx/sites-enabled/matrix-synapse.conf /etc/nginx/conf.d/matrix.conf /etc/nginx/sites-available/wellknown.conf /etc/nginx/sites-enabled/wellknown.conf /etc/nginx/conf.d/wellknown.conf; do
+for conf_path in /etc/nginx/sites-available/matrix.conf /etc/nginx/sites-available/matrix-synapse.conf /etc/nginx/sites-enabled/matrix.conf /etc/nginx/sites-enabled/matrix-synapse.conf /etc/nginx/conf.d/matrix.conf /etc/nginx/conf.d/matrix-synapse.conf /etc/nginx/sites-available/wellknown.conf /etc/nginx/sites-enabled/wellknown.conf /etc/nginx/conf.d/wellknown.conf; do
   if [ -f "$conf_path" ]; then
     s_name=$(grep -E -h "server_name" "$conf_path" 2>/dev/null | grep -v "^#" | sed "s/server_name//" | tr ";" " ")
     if [[ "$s_name" == *"$d"* ]] || [ "$target_node" = "synapse" ] || [ "$d" = "${hsDomain}" ]; then
@@ -22426,7 +22473,7 @@ if ! grep -rq "server_name.*\\b\${d}\\b" /etc/nginx/ 2>/dev/null; then
 
   if [ "$is_panel" = "true" ]; then
     echo "${panelB64}" | base64 -d > "$target_conf"
-  elif [ "$target_node" = "element" ] || [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]] || [ "$d" = "${elemDomain}" ]; then
+  elif [ "$target_node" = "element" ] || [[ "\${d}" == element* ]] || [[ "\${d}" == chat* ]] || [[ "\${d}" == web* ]] || [[ "\${d}" == matrixapp* ]] || [ "$d" = "${elemDomain}" ]; then
     mkdir -p /var/www/element
     echo "${elemB64}" | base64 -d > "$target_conf"
   else
@@ -22440,10 +22487,16 @@ if ! grep -rq "server_name.*\\b\${d}\\b" /etc/nginx/ 2>/dev/null; then
   fi
 fi
 
-# 5. Open ports 80 and 443 in firewall if ufw exists
+# 5. Reload Synapse service if running on synapse node so TLS cert update is applied immediately
+if [ "$target_node" = "synapse" ]; then
+  systemctl reload matrix-synapse 2>/dev/null || true
+fi
+
+# 6. Open ports 80, 443 and 8448 in firewall if ufw exists
 if command -v ufw >/dev/null 2>&1; then
   ufw allow 80/tcp >/dev/null 2>&1 || true
   ufw allow 443/tcp >/dev/null 2>&1 || true
+  ufw allow 8448/tcp >/dev/null 2>&1 || true
 fi
 
 exit 0
@@ -22545,6 +22598,7 @@ async function deployCertificatePipeline(
 mkdir -p /etc/nginx/ssl /etc/ssl/matrix
 echo "${certB64}" | base64 -d > "${certDest}"
 echo "${keyB64}" | base64 -d > "${keyDest}"
+chmod 644 "${certDest}"
 chmod 600 "${keyDest}"
 chown root:root "${keyDest}" 2>/dev/null || true
 if [ -d /etc/ssl/matrix ]; then
@@ -22552,7 +22606,9 @@ if [ -d /etc/ssl/matrix ]; then
   echo "${keyB64}" | base64 -d > /etc/ssl/matrix/synapse.key 2>/dev/null || true
   echo "${certB64}" | base64 -d > /etc/ssl/matrix/element.crt 2>/dev/null || true
   echo "${keyB64}" | base64 -d > /etc/ssl/matrix/element.key 2>/dev/null || true
+  chmod 644 /etc/ssl/matrix/*.crt 2>/dev/null || true
   chmod 600 /etc/ssl/matrix/*.key 2>/dev/null || true
+  chown matrix-synapse:matrix-synapse /etc/ssl/matrix/synapse.* 2>/dev/null || true
 fi
 exit 0
 '`;
@@ -23118,6 +23174,13 @@ app.post("/api/certificates/inspect-pem", authenticateToken, checkPermission(["O
       }
     });
 
+    const activeConn = getActiveConnection();
+    const clusterMap = await getClusterDomainMap(activeConn);
+    const coversSynapse = sans.some(s => s.startsWith('matrix') || s.startsWith('synapse') || (clusterMap.synapseDomain && s === clusterMap.synapseDomain)) || subject.includes('matrix');
+    const coversElement = sans.some(s => s.startsWith('element') || s.startsWith('chat') || s.startsWith('matrixapp') || s.startsWith('web') || (clusterMap.elementDomain && s === clusterMap.elementDomain)) || subject.includes('element') || subject.includes('chat');
+    const isCoversBoth = isWildcard || (coversSynapse && coversElement);
+    const suggestedTargetNode = (clusterMap.isDistributed && (isWildcard || isCoversBoth || discoveredDomains.length > 1)) ? 'all' : (clusterMap.isDistributed ? 'all' : 'synapse');
+
     return res.json({
       success: true,
       certInfo: {
@@ -23127,6 +23190,7 @@ app.post("/api/certificates/inspect-pem", authenticateToken, checkPermission(["O
         daysRemaining,
         isExpired,
         isWildcard,
+        isCoversBoth,
         sans
       },
       keyMatched,
@@ -23135,7 +23199,9 @@ app.post("/api/certificates/inspect-pem", authenticateToken, checkPermission(["O
       extractedKey: keyContent,
       matchedDomains,
       unmatchedDomains,
-      discoveredDomains
+      discoveredDomains,
+      suggestedTargetNode,
+      isClusterDistributed: clusterMap.isDistributed
     });
   } catch (err: any) {
     await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
@@ -23150,7 +23216,7 @@ app.post("/api/certificates/validate-and-upload", authenticateToken, checkPermis
   const tempKeyPath = `/tmp/up_key_${timestamp}.pem`;
 
   try {
-    const { domain, certContent, keyContent, isPanelDomain, panelUpstream } = req.body;
+    const { domain, certContent, keyContent, isPanelDomain, panelUpstream, targetNode } = req.body;
     if (!domain || !certContent || !keyContent) {
       return res.status(400).json({ error: "All fields (Domain, PEM Certificate, and Private Key) are required." });
     }
@@ -23192,6 +23258,10 @@ app.post("/api/certificates/validate-and-upload", authenticateToken, checkPermis
       }
     }
 
+    const activeConn = getActiveConnection();
+    const clusterMap = await getClusterDomainMap(activeConn);
+    const targetNodeChoice = targetNode || (clusterMap.isDistributed ? 'all' : 'auto');
+
     // Pass temp files to deployment pipeline
     const deployRes = await deployCertificatePipeline(
       cleanDomain,
@@ -23200,7 +23270,7 @@ app.post("/api/certificates/validate-and-upload", authenticateToken, checkPermis
       preWarnings,
       Boolean(isPanelDomain),
       panelUpstream,
-      req.body.targetNode || 'auto',
+      targetNodeChoice,
       certContent,
       keyContent
     );
@@ -23214,7 +23284,7 @@ app.post("/api/certificates/validate-and-upload", authenticateToken, checkPermis
       details: deployRes.details,
       deployedNodes: deployRes.deployedNodes,
       routeReason: deployRes.routeReason,
-      msg: `گواهی SSL با موفقیت اعتبارسنجی شد و بر اساس دامنه روی وب‌سرور Nginx سرور(های) [${(deployRes.deployedNodes || []).join(', ')}] سوار و فعال گردید.`
+      msg: `گواهی معتبر SSL با موفقیت اعتبارسنجی شد و روی سرور(های) [${(deployRes.deployedNodes || []).join(', ')}] سوار و فعال گردید و خطای سلف‌ساین برطرف شد.`
     });
   } catch (err: any) {
     await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
@@ -23229,7 +23299,7 @@ app.post("/api/certificates/apply-multi-domain", authenticateToken, checkPermiss
   const tempKeyPath = `/tmp/multi_key_${timestamp}.pem`;
 
   try {
-    const { certContent, keyContent, targetDomains, configurePanelSsl, panelDomain, panelUpstream } = req.body;
+    const { certContent, keyContent, targetDomains, configurePanelSsl, panelDomain, panelUpstream, targetNode } = req.body;
 
     if (!certContent || !keyContent) {
       return res.status(400).json({ error: "PEM Certificate and Private Key are required." });
@@ -23255,6 +23325,10 @@ app.post("/api/certificates/apply-multi-domain", authenticateToken, checkPermiss
       return res.status(400).json({ error: matchRes.error || "Private key does not match the provided PEM certificate." });
     }
 
+    const activeConn = getActiveConnection();
+    const clusterMap = await getClusterDomainMap(activeConn);
+    const targetNodeChoice = targetNode || (clusterMap.isDistributed ? 'all' : 'auto');
+
     const results: { domain: string; success: boolean; error?: string; deployedNodes?: string[]; routeReason?: string }[] = [];
     let overallSuccess = true;
 
@@ -23270,7 +23344,7 @@ app.post("/api/certificates/apply-multi-domain", authenticateToken, checkPermiss
         [],
         isPanel,
         panelUpstream,
-        req.body.targetNode || 'auto',
+        targetNodeChoice,
         certContent,
         keyContent
       );
@@ -23285,11 +23359,13 @@ app.post("/api/certificates/apply-multi-domain", authenticateToken, checkPermiss
 
     await runServerCommand(`rm -f "${tempCertPath}" "${tempKeyPath}"`).catch(() => {});
 
+    const allNodesDeployed = Array.from(new Set(results.flatMap(r => r.deployedNodes || [])));
+
     return res.json({
       success: overallSuccess,
       results,
       msg: overallSuccess 
-        ? `گواهی معتبر SSL با موفقیت بر اساس دامنه روی وب‌سرور Nginx سرورهای مربوطه (${results.length} دامنه) سوار و فعال شد.`
+        ? `گواهی معتبر SSL با موفقیت روی سرور(های) [${allNodesDeployed.join(', ') || 'سیناپس و المنت'}] اعمال شد و سرویس‌ها از حالت سلف‌ساین خارج شدند.`
         : `اعمال گواهی SSL روی برخی دامنه‌ها با خطا مواجه شد. لطفاً جزئیات را بررسی کنید.`
     });
   } catch (err: any) {

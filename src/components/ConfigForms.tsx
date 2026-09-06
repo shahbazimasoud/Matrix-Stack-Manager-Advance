@@ -2710,6 +2710,7 @@ export default function ConfigForms({
   const [certInspectionInfo, setCertInspectionInfo] = useState<any>(null);
   const [uploadMode, setUploadMode] = useState<'combined' | 'separate'>('combined');
   const [userConfirmedWarnings, setUserConfirmedWarnings] = useState<boolean>(false);
+  const [sslTargetNode, setSslTargetNode] = useState<'all' | 'auto' | 'synapse' | 'element'>('all');
 
   const [selfSignedDomain, setSelfSignedDomain] = useState('');
   const [validityDaysInput, setValidityDaysInput] = useState('825');
@@ -2793,6 +2794,9 @@ export default function ConfigForms({
         if (Array.isArray(data.matchedDomains) && data.matchedDomains.length > 0) {
           setSelectedTargetDomains(data.matchedDomains);
         }
+        if (data.suggestedTargetNode) {
+          setSslTargetNode(data.suggestedTargetNode);
+        }
         if (showToast) showToast('success', lang === 'fa' ? 'اطلاعات گواهی استخراج گردید' : 'Certificate inspected');
       }
     } catch (err: any) {
@@ -2836,7 +2840,8 @@ export default function ConfigForms({
           configurePanelSsl,
           panelDomain: panelDomainInput,
           panelUpstream: panelUpstreamInput,
-          userConfirmedWarnings
+          userConfirmedWarnings,
+          targetNode: sslTargetNode
         })
       });
 
@@ -2886,7 +2891,8 @@ export default function ConfigForms({
         body: JSON.stringify({
           domain: selectedCertDomain,
           certContent: certPemInput,
-          keyContent: keyPemInput
+          keyContent: keyPemInput,
+          targetNode: sslTargetNode
         })
       });
 
@@ -10499,6 +10505,94 @@ export default function ConfigForms({
                     {lang === 'fa' ? '+ افزودن' : '+ Add'}
                   </button>
                 </div>
+              </div>
+
+              {/* Target Server / Cluster Node Selection */}
+              <div className={`p-3.5 rounded-xl border space-y-2 text-xs ${
+                isLightMode ? 'bg-slate-50/80 border-slate-200' : 'bg-slate-950/60 border-slate-800'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <label className={`font-bold flex items-center gap-1.5 ${isLightMode ? 'text-slate-800' : 'text-slate-200'}`}>
+                    <Server className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>{lang === 'fa' ? 'هدف استقرار گواهی در کلاستر:' : 'Cluster Deployment Target:'}</span>
+                  </label>
+                  <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full font-semibold ${
+                    sslTargetNode === 'all'
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                      : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30'
+                  }`}>
+                    {sslTargetNode === 'all'
+                      ? (lang === 'fa' ? 'هر دو سرور (سیناپس + المنت)' : 'Dual Node (Synapse + Element)')
+                      : sslTargetNode === 'auto'
+                      ? (lang === 'fa' ? 'مسیریابی هوشمند دامنه' : 'Auto Routing')
+                      : sslTargetNode === 'synapse'
+                      ? (lang === 'fa' ? 'فقط سیناپس' : 'Synapse Only')
+                      : (lang === 'fa' ? 'فقط المنت وب' : 'Element Only')}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSslTargetNode('all')}
+                    className={`p-2 rounded-lg border text-center transition cursor-pointer font-bold ${
+                      sslTargetNode === 'all'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : isLightMode
+                        ? 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <div>{lang === 'fa' ? 'هر دو سرور (پیش‌فرض)' : 'Both Servers (All)'}</div>
+                    <div className="text-[10px] opacity-80 font-normal">{lang === 'fa' ? 'رفع سلف‌ساین همزمان' : 'Full Zero Self-Sign'}</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSslTargetNode('auto')}
+                    className={`p-2 rounded-lg border text-center transition cursor-pointer font-bold ${
+                      sslTargetNode === 'auto'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                        : isLightMode
+                        ? 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <div>{lang === 'fa' ? 'مسیریابی خودکار' : 'Auto Routing'}</div>
+                    <div className="text-[10px] opacity-80 font-normal">{lang === 'fa' ? 'بر اساس نام دامنه' : 'By Subdomain Name'}</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSslTargetNode('synapse')}
+                    className={`p-2 rounded-lg border text-center transition cursor-pointer font-bold ${
+                      sslTargetNode === 'synapse'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                        : isLightMode
+                        ? 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <div>{lang === 'fa' ? 'فقط سرور سیناپس' : 'Synapse Node'}</div>
+                    <div className="text-[10px] opacity-80 font-normal">{lang === 'fa' ? 'ماتریکس هوم‌سرور' : 'Homeserver Only'}</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSslTargetNode('element')}
+                    className={`p-2 rounded-lg border text-center transition cursor-pointer font-bold ${
+                      sslTargetNode === 'element'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                        : isLightMode
+                        ? 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <div>{lang === 'fa' ? 'فقط سرور المنت' : 'Element Node'}</div>
+                    <div className="text-[10px] opacity-80 font-normal">{lang === 'fa' ? 'المنت وب کلاینت' : 'Web Client Only'}</div>
+                  </button>
+                </div>
+                <p className={`text-[11px] leading-relaxed pt-1 ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                  {lang === 'fa'
+                    ? '💡 نکته مهم: با انتخاب «هر دو سرور»، گواهی معتبر هم روی سرور سیناپس و هم روی سرور المنت وب نصب می‌شود و خطای self-signed در هر دو بخش مرتفع می‌گردد.'
+                    : '💡 Deploying to Both Servers installs valid SSL certificates onto both Synapse and Element Web nodes to eliminate self-signed certificate warnings.'}
+                </p>
               </div>
 
               <button
